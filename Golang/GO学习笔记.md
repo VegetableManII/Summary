@@ -1,14 +1,119 @@
-## GO专家编程
+# GO学习笔记
 
-#### 数据类型
+## 数据类型
 
-##### slice
+### 数组
+
+- 数组的长度是数组类型的组成部分。
+
+- 不同长度或不同类型的数据组成的数组都是不同的类型
+
+- 不同长度的数组因为类型不同无法直接赋值
+
+- 一个数组变量即表示整个数组与C语言中的数组变量就是第一个元素的地址不同
+
+- 数组指针操作数组的方式和数组本身的操作类似不过不同长度的数组指针类型是完全不同的
+
+- 空数组不占用内存空间与空结构体类似
+
+  ```go
+  var times [5][0]int
+  for range times {
+      fmt.Println("hello")
+  }
+  // times占用内存为0，其长度仍然是5
+  ```
+
+### slice
 
 - 底层实现是数组
+
+- 当切片的底层数据指针为空时，切片等于nil，同时len和cap也成为无效的值
+
 - 增长规则  2倍—(1024)—>1.25倍
+
 - append会触发扩容，copy深层拷贝两个切片不会扩容
 
-##### map
+- #### 切片的内存泄露问题
+
+  - 在已有切片的基础上进行切片，不会创建新的底层数组。因为原来的底层数组没有发生变化，内存会一直占用，直到没有变量引用该数组。
+  - 当原切片由大量的元素构成，但是我们在原切片的基础上切片，虽然只使用了很小一段，但底层数组在内存中仍然占据了大量空间，得不到释放。
+  - 使用 `copy` 替代 `re-slice`
+
+- 切片的强制类型转换。注意，Go语言实现中非0大小数组的长度不得超过2GB，因此需要针对数组元素的类型大小计算数组的最大长度范围（`[]uint8`最大2GB，`[]uint16`最大1GB，以此类推，但是`[]struct{}`数组的长度可以超过2GB）
+
+  ```go
+  // +build amd64 arm64
+  
+  import "sort"
+  
+  var a = []float64{4, 2, 5, 7, 2, 1, 88, 1}
+  
+  func SortFloat64FastV1(a []float64) {
+      // 强制类型转换
+      var b []int = ((*[1 << 20]int)(unsafe.Pointer(&a[0])))[:len(a):cap(a)]
+  
+      // 以int方式给float64排序
+      sort.Ints(b)
+  }
+  
+  func SortFloat64FastV2(a []float64) {
+      // 通过 reflect.SliceHeader 更新切片头部信息实现转换
+      var c []int
+      aHdr := (*reflect.SliceHeader)(unsafe.Pointer(&a))
+      cHdr := (*reflect.SliceHeader)(unsafe.Pointer(&c))
+      *cHdr = *aHdr
+  
+      // 以int方式给float64排序
+      sort.Ints(c)
+  }
+  ```
+
+  - 第一种强制转换是先将切片数据的开始地址转换为一个较大的数组的指针，然后对数组指针对应的数组重新做切片操作。中间需要`unsafe.Pointer`来连接两个不同类型的指针传递。。
+  - 第二种转换操作是分别取到两个不同类型的切片头信息指针，任何类型的切片头部信息底层都是对应`reflect.SliceHeader`结构，然后通过更新结构体方式来更新切片信息，从而实现`a`对应的`[]float64`切片到`c`对应的`[]int`类型切片的转换。
+
+### 字符串
+
+- 字符串(string) 是不可变的，拼接字符串事实上是创建了一个新的字符串对象。
+
+- 字符串的底层数据类型是byte[]，字符串赋值也只是将底层的数组指针和长度进行赋值
+
+- #### 字符串使用的编码UTF-8
+
+  - UTF8字符序列也可能会遇到坏的编码。
+  - 如果遇到一个错误的UTF8编码输入，将生成一个特别的Unicode字符‘\uFFFD’
+  - 错误编码不会向后扩散是UTF8编码的优秀特性之一
+  - 在for range迭代时仍然会迭代错误的字节部分
+  - **rune是int32的别名**
+    - 保存Unicode码点(目前只使用了21位)，当string和rune类型做强制转换时会发生内存的重新分配
+
+- #### 字符串拼接方式
+
+  - +，性能差
+  - fmt.Sprintf，性能差
+  - strings.Builder，性能好
+  - bytes.Buffer，性能好
+  - []byte，性能好
+
+- #### 使用strings.Builder构造字符串
+
+```go
+func builderConcat(n int, str string) string {
+	var builder strings.Builder
+	builder.Grow(n * len(str)) // 预申请内存，比使用byte[]的方式还要少一次 byte转string 的内存申请
+	for i := 0; i < n; i++ {
+		builder.WriteString(str)
+	}
+	return builder.String()
+}
+```
+
+- #### []byte转换成string不需要拷贝内存的场景，直接返回string.str指针指向[]byte内存
+  - 使用m[string(b)]来查找map（map是string为key，临时把切片b转成string）；
+  - 字符串拼接，如”<” + “string(b)” + “>”；
+  - 字符串比较：string(b) == “foo”
+
+### map
 
 - 底层实现是哈希表，一个哈希表中有多个哈希表节点
 
@@ -52,14 +157,7 @@ type bmap struct {
   - 查找该key是否已经存在，如果存在则直接更新值
   - 如果没找到将key，将key插入
 
-##### string
-
-- []byte转换成string不需要拷贝内存的场景，直接返回string.str指针指向[]byte内存
-  - 使用m[string(b)]来查找map（map是string为key，临时把切片b转成string）；
-  - 字符串拼接，如”<” + “string(b)” + “>”；
-  - 字符串比较：string(b) == “foo”
-
-##### channel
+### channel
 
 - 有缓存的channel采用环形队列作为缓冲区
 
@@ -76,7 +174,7 @@ type bmap struct {
 
 - 读数据流程
 
-  如果sendq不为空，且没有缓冲则从sendq取出一个G写入唤醒，如果sendq不空且有缓冲区则取出buf首元素再从sendq拿一个G写入唤醒；sendq为空将当前G加入recv队列等待唤醒
+  如果sendq不为空，且没有缓冲则从sendq取出一个G唤醒并读取数据，如果sendq不空且有缓冲区，说明缓冲区满，则取出缓冲区首元素再从sendq拿一个G唤醒写入到缓冲区末尾；sendq为空，说明缓冲区也为空，将当前G加入recv队列等待唤醒
 
 - 关闭channel会唤醒全部recvq的G，引发panic的场景有：
 
@@ -84,9 +182,44 @@ type bmap struct {
   - 关闭已经关闭的channel
   - 向关闭的channel中写数据
 
-#### 流程控制
+### 函数
 
-##### defer规则
+- 具名函数：一般对应于包级的函数，是匿名函数的一种特例。
+
+- 支持多个参数和多个返回值，都是以值传递的方式和被调用者交换数据。
+
+- 支持可变数量参数，可变参数必须在参数声明的最后出现，实际上是一个切片类型的参数
+
+- 可变参数是空接口类型是，调用者是否解包可变参数其结果不同
+
+- 闭包函数：当匿名函数引用了外部作用域中的变量时就成了闭包函数，闭包是引用传递。
+
+- go程序初始化流程
+
+  ![](./GO学习笔记.assets/init.ditaa.png)
+
+  - 包中的多个init函数其调用顺序未定，文件中的多个init函数按照顺序执行
+  - **注意：**在进入main函数之前所有的初始化都在主系统线程中即同一个goroutine，如果在init中启动了其他goroutine则不会立即执行而是在进入main函数之后再执行
+  
+- 函数调用栈：递归调用深度逻辑上没有限制，不会出现栈溢出错误的，运行时会根据需要动态地调整函数栈的大小。goroutine启动时只会分配很小的栈空间
+
+### 方法
+
+- 方法是绑定到一个具体类型的特殊函数。
+- 方法是依托于类型的，必须在编译时静态绑定。
+- 方法和函数都不支持重载
+- 在结构体中通过匿名成员来实现继承，与C++中的虚函数多态不同，所继承来的方法的接受者仍然是匿名成员本身，在编译时会把调用继承的方法的代码展开
+
+### 接口
+
+- 接口类型是对其他类型行为的抽象和概括
+- 接口定义了方法的集合，这些方法依托于运行时的接口对象。
+- 接口对应的方法是在运行时动态绑定的。（Go语言通过隐式接口机制实现了鸭子面向对象模型。如果一个对象看起来像某个接口的实现那么就可以拿来当做这个接口使用）
+- 
+
+## 流程控制
+
+### defer规则
 
 - 延迟函数的参数在defer语句出现时就已经确定下来了
 - 延迟函数执行按后进先出顺序执行，即先出现的defer最后执行
@@ -95,7 +228,7 @@ type bmap struct {
 - 函数返回过程：1.返回值存入栈(具名返回值会进行赋值)  2.defer函数  3.执行跳转
   - 注意当返回值为匿名返回值，返回字面值时defer不会影响返回值
 
-##### select实现原理
+### select实现原理
 
 ```go
 case数据结构
@@ -131,13 +264,13 @@ case elem, ok := <-chan1: // 通过ok来判断当前channel是否被关闭 关�
 - lockorder：所有case语句中channel序列，以达到去重防止对channel加锁时重复加锁的目的。
 - ncases表示scase数组的长度
 
-##### range
+### range
 
 - 遍历**slice**前会先获以slice的长度len_temp作为循环次数，循环体中，每次循环会先获取元素值，如果for-range中接收index和value的话，则会对index和value进行一次赋值。由于循环开始前循环次数就已经确定了，所以循环过程中新添加的元素是没办法遍历到的。
 - 遍历**map**时没有指定循环次数，循环体与遍历slice类似。由于map底层实现与slice不同，map底层使用hash表实现，插入数据位置是随机的，所以遍历过程中新插入的数据不能保证遍历到
 - channel遍历是依次从channel中读取数据,读取前是不知道里面有多少个元素的。如果channel中没有元素，则会阻塞等待，如果channel已被关闭，则会解除阻塞并退出循环。
 
-##### mutex
+### mutex
 
 ```go
 type Mutex struct {
@@ -149,7 +282,7 @@ type Mutex struct {
 - Mutex.state表示互斥锁的状态，比如是否被锁定等。
 - Mutex.sema表示信号量，协程阻塞等待该信号量，解锁的协程释放信号量从而唤醒等待信号量的协程。
 
-![](./GO专家编程.assets/mutex.png)
+![](./GO学习笔记.assets/mutex.png)
 
 - Locked: 表示该Mutex是否已被锁定，0：没有锁定 1：已被锁定。
 - Woken: 表示是否有协程已被唤醒，0：没有协程唤醒 1：已有协程唤醒，正在加锁过程中。
@@ -169,7 +302,7 @@ type Mutex struct {
 - 重复解锁引发panic
   - Unlock过程分为将Locked置为0，然后判断Waiter值，如果值>0，则释放信号量。多次unlock会释放多个信号量进而唤醒多个协程去抢锁，应该使用defer来避免死锁
 
-##### RWMutex
+### RWMutex
 
 ```go
 type RWMutex struct {
@@ -186,9 +319,52 @@ type RWMutex struct {
 - 写操作不会被饿死的保证
   - 写操作到来时，会把RWMutex.readerCount值拷贝到RWMutex.readerWait中，用于标记排在写操作前面的读者个数。前面的读操作结束后，除了会递减RWMutex.readerCount，还会递减RWMutex.readerWait值，当RWMutex.readerWait值变为0时唤醒写操作。
 
-#### 内存管理
+## 并发的内存模型
 
-![](./GO专家编程.assets/memory内存.png)
+### 原子操作
+
+- sync/atomic
+
+  - sync.Once 通过标志位来实现单件模式
+
+  - `atomic.Value`原子对象提供了`Load`和`Store`两个原子方法，分别用于加载和保存数据，返回值和参数都是`interface{}`类型，因此可以用于任意的自定义复杂类型。
+
+    ```go
+    var config atomic.Value // 保存当前配置信息
+    
+    // 初始化配置信息
+    config.Store(loadConfig())
+    
+    // 启动一个后台线程, 加载更新后的配置信息
+    go func() {
+        for {
+            time.Sleep(time.Second)
+            config.Store(loadConfig())
+        }
+    }()
+    
+    // 用于处理请求的工作者线程始终采用最新的配置信息
+    for i := 0; i < 10; i++ {
+        go func() {
+            for r := range requests() {
+                c := config.Load()
+                // ...
+            }
+        }()
+    }
+    ```
+
+    生产者消费者模式
+
+### 顺序一致性内存模型
+
+- 不同的Goroutine之间，并不满足顺序一致性内存模型，需要通过明确定义的同步事件来作为同步的参考。
+- 如果两个事件不可排序，那么就说这两个事件是并发的。为了最大化并行，Go语言的编译器和处理器在不影响上述规定的前提下可能会对执行语句重新排序（CPU也会对一些指令进行乱序执行）。
+- 一个goroutine是无法看到另一个goroutine中的执行顺序的
+
+## 内存管理
+
+![](./GO学习笔记.assets/memory内存.png)
 
 - arena的大小为512G，为了方便管理把arena区域划分成一个个的page，每个page为8KB,一共有512GB/8KB个页；
 
@@ -212,7 +388,7 @@ type RWMutex struct {
   }
   ```
 
-##### Cache 
+##### cache 
 
 线程私有资源，为每个线程分配的span缓存
 
@@ -363,7 +539,7 @@ type WaitGroup struct {
 }
 ```
 
-![](./GO专家编程.assets/wg.png)
+![](./GO学习笔记.assets/wg.png)
 
 - counter： 当前还未执行结束的goroutine计数器
 
@@ -439,7 +615,7 @@ type Context interface {
 
 - 继承关系
 
-  ![](./GO专家编程.assets/context.png)
+  ![](./GO学习笔记.assets/context.png)
 
 ##### cancelCtx
 
@@ -636,10 +812,11 @@ valueOf获取值，传递的参数当参数使基本类型如int float struct这
 
 - P的个数默认等于CPU核数，每个M必须持有一个P才可以执行G，一般情况下M的个数会略大于P的个数，这多出来的M将会在G产生系统调用，类似线程池
 
-![](./GO专家编程.assets/goroutine系统调用.png)
+![](./GO学习笔记.assets/goroutine系统调用.png)
 
 ##### 工作量窃取
 
-![](./GO专家编程.assets/goroutineG窃取.png)
+![](./GO学习笔记.assets/goroutineG窃取.png)
 
 **goroutine阻塞**：系统调用(打开文件)、网络数据读取(socket)、管道操作、同步包的控制
+
