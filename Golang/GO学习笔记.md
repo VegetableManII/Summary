@@ -261,14 +261,140 @@ type bmap struct {
 
 ## 流程控制
 
-### defer规则
+### defer
 
-- 延迟函数的参数在defer语句出现时就已经确定下来了
+函数中通过某些方法获取的一些资源如文件、锁等，在函数的执行过程中某些操作可能导致提前返回，为了避免资源泄露在每个return之前调用release释放资源，如果没有defer就需要在每一个可能发生错误的地方调用release会造成**代码臃肿**和**维护性比较差**的问题。通过defer能够保证无论是在那个位置提前返回都能保证资源的释放
+
+- **参数即时求值**，延迟函数的参数在defer语句出现时就已经确定下来了
+
 - 延迟函数执行按后进先出顺序执行，即先出现的defer最后执行
+
 - 延迟函数可能操作主函数的具名返回值
 
-- 函数返回过程：1.返回值存入栈(具名返回值会进行赋值)  2.defer函数  3.执行跳转
-  - 注意当返回值为匿名返回值，返回字面值时defer不会影响返回值
+- 函数返回过程：
+
+  1. 返回值存入栈(具名返回值会进行赋值)  
+
+  2. defer函数
+
+  3. 执行跳转RET指令
+
+    注意当返回值为匿名返回值，返回字面值时defer不会影响返回值
+
+```go
+var g = 100
+
+func deferFc2() (r int) {
+	defer func() {
+		g = 200
+	}()
+	fmt.Printf("f: g = %d\n", g) 
+	return g
+  // 第一步 r = g = 100
+  // 第二步 g = 200
+  // 第三步 RET
+}
+func deferFc3() (r int) {
+	r = g
+	defer func() {
+		r = 200
+	}()
+	fmt.Printf("f: r = %d\n", r)
+	r = 0
+	return r
+  // 第一步 r = 0
+  // 第二步 r = 200
+  // 第三步 RET
+}
+func main() {
+    i := f()
+    fmt.Printf("main: i = %d, g = %d\n", i, g)
+}
+
+deferFc2: g = 100
+main: i = 100, g = 200
+
+deferFc3: r = 100
+main: i = 200, g = 100
+```
+
+- deferproc函数`func deferproc(siz int32, fn *funcval)`
+
+  ​		siz 是 defered 函数的参数以字节为单位的大小
+
+  ​		第二个参数 funcval 是一个变长结构体
+
+  - 函数内部流程：
+
+    - 编译器会把 go 代码中 defer 语句翻译成对 deferproc 函数的调用
+
+    - deferproc 函数通过 newdefer 函数分配一个 _defer 结构体对象并放入当前 goroutine 的 _defer 链表的表头；
+
+    - 在 _defer 结构体对象中保存被延迟执行的函数 fn 的地址以及 fn 所需的参数
+
+    - 返回到调用 deferproc 的函数继续执行后面的代码
+
+      通过return0()设置rax寄存器的值为0，隐性的给调用者返回一个0值，在panic/recover的情况下该值不是0值
+
+  **在调用runtime.deferproc时，栈上保存着deferproc函数需要的两个参数和defered函数的参数（通过defer注册的函数就是defered函数）；deferproc函数会通过rax寄存器返回一个隐性返回值**
+
+  - newdefer的实现
+    - 首先尝试从与当前工作线程绑定的 p 的 _defer 对象池和全局对象池中获取一个满足大小要求 (sizeof( _defer) + siz向上取整至16的倍数)的 _defer结构体对象；如果没有满足要求的空闲 _defer 对象则从堆上分配一个
+    - 然后把分配的对象挂在当前goroutine的 _defer 链表的表头
+
+- deferreturn函数
+
+  **负责递归的调用通过defer注册的函数**
+
+  1. 通过当前 goroutine 对应的 g 结构体对象的  _defer  链表判断是否有需要执行的 defered 函数，如果没有（g. _defer == nil 或者 defered 函数不是在 deferreturn 的 caller 函数中注册的函数）则直接返回
+     - 递归调用时通过判断 `d == nil` 可以确定递归的终止条件
+     - 通过 `d.sp != sp` 来判断 d 对象所包装的defered函数现在是否被执行，比如在调用链 a()->b()->c() 中，他们都是通过defer注册的延迟函数，那么当 c() 执行结束确保只能执行c中注册的函数而不是a、b中注册的defer函数
+  2. 从 _defer 对象中把 defered 函数需要的参数拷贝到栈上
+  3. 释放 _defer 结构体对象
+  4. 通过 jmpdefer 函数调用 defered 函数
+
+### panic/recover
+
+- defer语句被编译器翻译成对runtime包中的deferproc()函数的调用，该函数把defered函数打包成_defer结构体对象挂入goroutine对应的g结构体对象的__defer链表中，defer对象除了保存defered函数的地址以及函数需要的参数外，还会分别把call deferproc指令的下一条指令的地址以及此时函数调用栈顶指针保存在defer.pc和defer.sp成员中，用于recover时恢复程序的正常执行流程
+- 当某个defered函数通过recover()函数捕获到一个panic之后，程序将从该defered函数对应的_defer结构体对象的pc成员所保存的指令地址处开始执行；
+- **panic/recover执行流程**：对panic()或recover()的调用会被编译器翻译成runtime包中gopanic()和gorecover()的函数调用
+  - 遍历当前goroutine所注册的defered函数并**通过reflectcall调用**遍到的函数
+    - 不同的defered函数参数大小可能有很大的差异
+    - gopanic函数的栈帧大小固定且很小
+  - 如果某个defered函数调用了recover(运行时中的gorecover函数)则使用mcall(recovery)恢复程序的正常流程
+  - 否则执行完所有的defered函数之后打印panic栈信息然后退出程序
+- panic可以嵌套，当发生panic之后在执行defer函数时又发生了panic即为嵌套。每一个还没有被recover的panic都会对应一个_panic结构体对象，他们被依次挂在g结构体的__panic链表中，最近发生的panic位于链表的头，最早发生的位于链尾。
+  - 嵌套情况下其调用链：**gopanic()——reflectcall()——defered()——gopanic()**
+    - 如果在defered函数通过defer再次注册了defered函数并且recover收集了最新的panic，则调用链从**reflectcall()**原路返回到**gopanic()**
+    - 如果在defered函数中没有recover自己的panic，则**reflectcall()**不会原路返回。要么第二次gopanic执行完所有defered函数之后退出程序，要么新发生的panic代替前一次的panic然后由外层的defered函数recover
+
+- **主动调用用panic**
+
+  - 在go代码中直接调用或者由编译器插入，编译器会在需要检查数组/slice是否越界的情况下插入painc代码
+
+- **非法操作导致panic**
+
+  - 向只读内存写入数据，访问非法内存等。在linux平台通过信号机制实现对panic的调用
+
+    - **具体过程**
+
+      1. CPU在内存中保存发生异常的指令的地址（**异常返回地址**）
+      2. 进入内核，执行由操作系统启动时提供的**异常处理程序**，该程序会负责把CPU的所有相关的寄存器的值保存在内存中
+      3. 向引起异常的当前线程**发送SIGSEGV信号**
+      4. 从内核返回过程中发现有信号需要处理
+      5. 从内核返回到**用户态执行信号处理程序**（go程序启动时会向内核注册信号处理函数），它把异常返回地址修改为runtime.sigpanic函数的地址
+      6. 信号处理程序执行完毕进入内核
+      7. 从内核返回开始执行**runtime.sigpanic**函数
+
+    - SIGSEGV信号处理具体流程
+
+      ```go
+      内核返回-> runtime.sigtramp() ->runtime.sigtrampgo()->runtime.sighandler()->sigctxt.preparePanic()修改异常返回地址
+      ```
+
+      - runtime.sigtramp()是go程序启动时向内核注册的信号处理函数，当线程收到该信号内核负责让CPU进入该函数执行
+      - 内核返回之前，把异常返回地址等数据保存在信号处理程序的函数调用栈中，等信号处理程序执行完成后再次进入内核时，内核会把之前保存在栈上的异常返回地址等数据拷贝回内核，然后再返回到用户态继续执行异常返回地址处的指令。这个过程中信号处理程序有机会修改异常返回地址为runtime.sigpanic函数的地址
+      - 信号处理程序执行完成后进入内核后再次返回用户态时CPU就会从runtime.sigpanic函数开始执行
 
 ### select实现原理
 
