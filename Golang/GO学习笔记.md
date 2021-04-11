@@ -530,6 +530,388 @@ type RWMutex struct {
 - 如果两个事件不可排序，那么就说这两个事件是并发的。为了最大化并行，Go语言的编译器和处理器在不影响上述规定的前提下可能会对执行语句重新排序（CPU也会对一些指令进行乱序执行）。
 - 一个goroutine是无法看到另一个goroutine中的执行顺序的
 
+### goroutine调度器
+
+- goroutine是Go实现的用户态线程
+
+  - 传统操作系统线程的问题
+    - 创建和切换笨重：需要进入内核
+    - 内存使用笨重：一方面内核在创建线程时为了避免溢出会默认分配较大的虚拟地址空间也称栈空间，容易造成浪费；另一方面栈内存空间一旦创建和初始化完成之后其大小不会改变，仍存在溢出的风险
+  - 用户态gororutine
+    - 切换和创建都在用户代码中完成而无需进入操作系统内核
+    - 栈大小默认2k，goroutine的栈会自动扩大和收缩
+  - 两级线程模型（M:N）：M个goroutine可以运行在N个系统线程上，内核调度线程，线程调度goroutine
+    - g结构体对象，goroutine的所有信息都保存在一个 g 对象中，当goroutine被调离CPU时，调度器负责把CPU寄存器的值保存在g对象的成员变量中，当goroutine被调度起来运行时，调度器负责把g对象的成员变量保存的寄存器的值复制到CPU的寄存器当中
+    - schedt结构体对象，保存调度器自身的状态信息和保存goroutine的运行队列（全局运行队列）。每个go程序中schedt结构体只有一个实例对象，在源码中被定义成一个共享全局变量，访问队列中的数据需要互斥锁的操作。
+    - p结构体对象，保存每个工作线程私有的局部goroutine运行队列，工作线程优先使用自己的局部运行队列，在必要情况下才去访问全局运行队列，尽量减少锁的冲突提高工作线程的并发性。每一个工作线程都会与一个p结构体对象的示例关联
+    - m结构体对象，保存工作线程中的相关信息，如栈的起止位置、当前正在执行的goroutine以及是否空闲等状态信息，同时通过指针维护与p结构体对象的绑定关系。每个工作线程都有唯一一个m结构体对象与之对应
+
+  ![](./GO学习笔记.assets/屏幕快照 2021-04-10 下午1.22.43.png)
+
+- **线程本地存储（TLS**）的使用：通过定义全局的m结构体变量，由线程本地存储机制可以为工作线程实现一个指向m结构体对象的私有全局变量，由此可以使用该全局变量来访问自己的m结构体对象以及与其关联p和g对象
+
+### main goroutine的创建
+
+程序加载在**schedinit**完成调度系统的初始化后，调用**newproc()**创建新的goroutine用于**执行runtime.main**，runtime,main会去**调用main.main**
+
+- newproc函数，接收两个参数：一所有参数的和大小，二入口函数的地址
+  - newproc创建新的goroutine就绪需要把原来栈上的参数复制到新的栈上，所以必须要知道函数的参数的大小
+  - 两个工作内容
+    - 获取fn函数第一个参数的地址
+    - 使用systemstack函数切换回g0栈，对于程序刚刚加载完成的场景来说本身就在g0栈所以不需要进行切换
+- newproc1函数，newproc是对newproc1的封装
+  - 内容：
+    - sched成员进行初始化，该成员包含调度器代码在调度goroutine到CPU运行时的必须信息
+    - gostartcallfn函数
+      - 从参数中提取出函数地址
+        - 执行gostartcall函数，进行栈空间的调整和sched成员
+          1. 调整栈空间，把goexit函数的第二条指令的地址入栈，伪造成goexit函数调用了fn，从而使fn执行完成之后执行ret指令时返回到goexit继续执行完成最后的清理工作
+          2. 重新设置newg.buf.pc 为需要执行的函数的地址，fn，称为runtime.main函数的地址
+    - 修改newg的状态为 _Grunnable 并放到**本地运行队列**当中，此时一个goroutine创建完成即 **main goroutine**
+  - 说明：
+    - main goroutine对应的newg结构体对象的sched成员已经完成初始化
+    - newg已经放到与当前主线程绑定的p结构体对象的本地运行队列，第一个goroutine
+    - newg的m成员为nil，因为此时还未被调度运行也就没有任何m进行绑定
+  - 作用：
+    - 从堆上分配一个g结构体对象并为这个newg分配一个大小为2K的栈，并设置好stack成员，然后把newg需要执行的函数的参数从执行newproc的栈 ( g0栈 ) 拷贝到newg的栈
+
+### main goroutine的调度(从g0切换到main goroutine)
+
+- 保存g0的调度信息，主要是保存CPU栈顶寄存器SP到g0.sched.sp成员之中；
+
+- **schedule函数**
+
+  - 通过**globrunqget()**和**runqget()**函数分别从全局运行队列和当前工作线程的本地运行队列选取下一个需要运行的goroutine，如果两个队列都没有需要运行的giroutine则通过**findrunable()**函数从其他p的运行队列中盗取goroutine
+  - 找到需要运行的giroutine之后调用**excute函数**
+
+- **excute函数**（从g0切换到goroutine运行）
+
+  - excute函数的第一个参数gp即需要调度运行的goroutine，将其状态从 _Grunnable修改为 _Grunning，然后把gp和m关联起来，由此可以找到当前线程正在执行哪一个goroutine
+
+  - excute完成gp运行前准备工作之后，excute调用**gogo函数**
+
+- **gogo函数**（从g0切换到gp（CPU执行权的转让以及栈的切换））
+
+  - gogo函数的汇编代码功能
+  - 将gp.sched的成员恢复到CPU的寄存器完成状态以及栈的转换
+  - 跳转到gp.sched.pc所指的指令地址（runtime.main）处执行（JMP指令）
+
+- **runtime.main函数**的工作流程
+
+  1. 创建一个sysmon系统监控线程，负责整个程序的gc、抢占调度以及netpoll等功能的监控
+  2. 执行runtime包的初始化
+  3. 执行main包以及main包import的所有包的初始化
+  4. 执行main.main函数
+  5. 从main.main函数返回后调用exit系统调用退出进程
+
+### 非main goroutine的退出流程
+
+**非main goroutine退出时会返回到goexit执行清理工作**
+
+- 非main goroutine返回时直接返回到goexit的第二条指令 CALL runtime.goexit1(SB)，该指令继续调用goexit1函数
+
+- goexit1函数调用mcall函数从当前g2 goroutine切换到g0，然后再g0栈上调用和执行goexit0函数
+
+- mcall函数
+
+  - 首先从当前g切换到g0，包括保存当前g的调度信息，把g0设置到TLS中，修改CPU的rsp寄存器使其指向g0的栈
+  - 以当前运行的g为参数调用fn函数（这里是goexit0）
+
+- 切换到g0栈之后，执行goexit0函数完成清理工作
+
+  1. 把g的状态从 _Grunning变更为 _Gdead
+  2. 然后把g的一些字段清空成0值
+  3. 调用dropg函数解除g和m之间的关系，g->m = nil, m->currg = nil
+  4. 把g放入到p的freeg队列缓存起来供下次创建g时快速获取而不用从内存分配。freeg即g的对象池
+  5. 调用schedule函数再次进行调度
+
+- #### mecall函数和gogo函数的对比
+
+  - gogo函数实现从g0切换到某个goroutine中运行
+    - 首先切换栈再通过 JMP 指令跳转
+    - 切换栈和跳转指令不能颠倒，因为跳转指令之后执行的是用户的goroutine代码此时无法再切换栈
+  - mcall函数实现从某个goroutine切换到g0中来运行
+    - 只切换栈而没有使用跳转指令跳转到 runtime 代码去执行
+    - goroutine使用call指令调用mcall函数，mcall函数本身就是 runtime 代码。所以在使用mcall时已经完成了代码的跳转
+
+### 调度循环
+
+```go
+schedule()->execute()->gogo()->g2()->goexit()->goexit1()->mcall()->goexit0()->schedule()
+// g2()->goexit()->goexit1()->mcall() 在g2空间执行
+```
+
+
+
+![](./GO学习笔记.assets/屏幕快照 2021-04-10 下午4.47.59.png)
+
+- #### 工作线程执行流程
+
+  1. 初始化调用mstart函数
+  2. 调用mstart1函数，在该函数中调用save函数设置g0.sched.sp和g0.sched.pc等调度信息，sp指向mstart函数栈帧的栈顶
+  3. 依次调用`schedule->execute->gogo`
+  4. 运行用户的goroutine代码
+  5. 用户goroutine代码执行过程中调用runtime中的某些函数，然后这些函数调用mcall切换到g0.sched.sp所指的栈并最终再次调用schedule函数进入新一轮调度
+
+### schedule调度策略
+
+- #### 调度的发生
+
+  - goroutine执行某个操作因条件不满足需要等待（channel阻塞，网络连接阻塞，加锁阻塞或select操作阻塞）而发生的调度；
+  - goroutine主动调用Gosched()函数让出CPU而发生的调度；
+  - goroutine运行时间太长或长时间处于系统调用之中而被调度器剥夺运行权而发生的调度。
+
+- #### 从全局获取goroutine
+
+  - globrunqget函数
+    - 参数一，与当前工作线程绑定的p
+    - 参数二，最多可以从全局队列拿多少个g到当前工作线程的本地运行队列中（根据本地队列的容量计算出应该拿多少个goroutine，实现了负载均衡）
+
+  ```go
+  // Try get a batch of G's from the global runnable queue.
+  // Sched must be locked.
+  func globrunqget(_p_ *p, max int32) *g {
+      if sched.runqsize == 0 {  //全局运行队列为空
+          return nil
+      }
+  
+      //根据p的数量平分全局运行队列中的goroutines
+      n := sched.runqsize / gomaxprocs + 1
+      if n > sched.runqsize { //上面计算n的方法可能导致n大于全局运行队列中的goroutine数量
+          n = sched.runqsize
+      }
+      if max > 0 && n > max {
+          n = max   //最多取max个goroutine
+      }
+      if n > int32(len(_p_.runq)) / 2 {
+          n = int32(len(_p_.runq)) / 2  //最多只能取本地队列容量的一半
+      }
+  
+      sched.runqsize -= n
+  
+      //直接通过函数返回gp，其它的goroutines通过runqput放入本地运行队列
+      gp := sched.runq.pop()  //pop从全局运行队列的队列头取
+      n--
+      for ; n > 0; n-- {
+          gp1 := sched.runq.pop()  //从全局运行队列中取出一个goroutine
+          runqput(_p_, gp1, false)  //放入本地运行队列
+      }
+      return gp
+  }
+  ```
+
+- #### 从本地工作线程中获取goroutine（涉及到并发操作因为在获取g的过程中可能有其他线程在窃取g）
+
+  - 本地循环队列
+    - P的runq、runqhead、runqtail三个成员组成的无锁循环队列，最多可容纳256个goroutine
+    - P的runnext成员，指向g结构体对象的指针，最多只包含一个goroutine
+  - runqget函数
+    - runnext成员不空则返回runnext所指的goroutine，并把runnext成员清零；
+    - runnext为空则继续从循环队列中查找goroutine
+      - atmoic.LoadAcq
+        - 原子读取
+        - 位于atmoic.LoadAcq之后的代码对内存的读取和写入必须在atmoic.LoadAcq读取完成后才能执行，编译器和CPU不能打乱这个顺序
+        - 当前线程执行atmoic.LoadAcq时可以读取到其他线程最近一次通过atomic.CasRel对同一个变量写入的值，与此同时，位于atmoic.LoadAcq之后的代码不管读取哪个内存地址中的值，都可以读取到其他线程中位于atomic.CasRel（对同一个变量操作）之前的代码最近一次对内存的写入
+      - atomic.CasRel
+        - 原子执行比较并交换操作
+        - 位于atomic.CasRel之前的代码，对内存的读取和写入必须在atomic.CasRel对内存的写入之前完成，编译器和CPU都不能打乱这个顺序；
+        - 线程执行atomic.CasRel完成后其它线程通过atomic.LoadAcq读取同一个变量可以读到最新的值，与此同时，位于atomic.CasRel之前的代码对内存写入的值，可以被其它线程中位于atomic.LoadAcq（对同一个变量操作）之后的代码读取到。
+    - 以上两步都必要的使用 CAS操作（比较并交换）以保证多线程访问的安全性
+
+  ```go
+  // Get g from local runnable queue.
+  // If inheritTime is true, gp should inherit the remaining time in the
+  // current time slice. Otherwise, it should start a new time slice.
+  // Executed only by the owner P.
+  func runqget(_p_ *p) (gp *g, inheritTime bool) {
+      // If there's a runnext, it's the next G to run.
+      //从runnext成员中获取goroutine
+      for {
+          //查看runnext成员是否为空，不为空则返回该goroutine
+          next := _p_.runnext   
+          if next == 0 {
+              break
+          }
+          if _p_.runnext.cas(next, 0) {
+              return next.ptr(), true
+          }
+      }
+  
+      //从循环队列中获取goroutine
+      for {
+          h := atomic.LoadAcq(&_p_.runqhead) // load-acquire, synchronize with other consumers
+          t := _p_.runqtail
+          if t == h {
+              return nil, false
+          }
+          gp := _p_.runq[h%uint32(len(_p_.runq))].ptr()
+          if atomic.CasRel(&_p_.runqhead, h, h+1) { // cas-release, commits consume
+              return gp, false
+          }
+      }
+  }
+  ```
+
+  - #### CAS操作与ABA问题
+
+    - 对runnext成员的CAS操作：
+      - __ p__绑定的当前工作线程才会去修改runnext为一个非0值
+      - 其他线程z很难过把runnext的值从一个非0值修改为0值，无法修改0值为非0值
+      - 当前线程读取到A值之后，不可能有线程修改其值为B(0)之后再修改回A
+    - 对循环队列的CAS操作：
+      - 当前工作线程操作的是__ p__的本地队列，只有跟 p 绑定的当前工作线程才会因为向队列中添加goroutine去修改runqtail
+      - 其他工作线程不会往该队列里添加goroutine，也不会去修改runqtail，他们只会因为窃取g而修改runqhead
+      - 当前工作线程从runqhead读取A值之后，其他工作线程不可能修改runqhead的值为B之后再第二次把它修改为A
+
+- #### 从其他P中窃取goroutine
+
+  - 除了窃取g，还参与了gc和netpoll相关的工作
+
+  - findrunnable()函数
+
+    - 工作线程M的自旋状态：**工作线程在从其它工作线程的本地运行队列中盗取goroutine时的状态称为自旋状态**
+    - 盗取算法：**两层for循环遍历allp中的所有的p查看其运行队列是否有待运行的g。如果有则窃取一半，为了保证公平性，遍历allp时从随机位置上的p开始，而且遍历的顺序也随机化了，使用了一种伪随机的方式遍历allp中的每个p，防止每次遍历时使用同样的顺序访问allp中的元素**
+
+  - #### 工作线程进入睡眠
+
+    - 找不到需要运行的goroutine则调用stopm进入睡眠状态
+
+    - stopm()函数
+
+      - **调用mput把m结构体对象放入sched的midle空闲队列，然后通过notesleep(&m.park)函数让自己进入睡眠状态**
+
+        - **note是go runtime实现的一次性睡眠和唤醒机制**
+        - **一个线程可以通过调用notesleep(\*note)进入睡眠状态，而另外一个线程则可以通过notewakeup(\*note)把其唤醒**
+        - linux平台下使用futex系统调用实现，mac下使用pthread_cond_t条件变量来实现。note对这些底层机制进行抽象封装提高拓展性
+
+      - notesleep函数调用futexsleep进入睡眠，因为**futexsleep有可能意外从睡眠中返回**，所以从futexsleep函数返回后还需要检查note.key是否还是0，如果是0则表示并不是其它工作线程唤醒了我们，只是futexsleep意外返回了，需要再次调用futexsleep进入睡眠。
+
+      - futexsleep调用futex进入睡眠，**futex系统调用的功能为如果 \*uaddr == val 则进入睡眠，否则直接返回**，该操作必须是原子操作所以在通过系统调用futex进入内核执行
+
+        ```c
+        int64 futex(int32 *uaddr, int32 op, int32 val, struct timespec *timeout, int32 *uaddr2, int32 val2);
+        ```
+
+### goroutine的调度运行
+
+- 过程：
+  1. 切换到g0栈；
+  2. 分配g结构体对象；
+  3. 初始化g对应的栈信息，并把参数拷贝到新g的栈上；
+  4. 设置好g的sched成员，该成员包括调度g时所必须pc, sp, bp等调度信息；
+  5. **调用runqput函数把g放入运行队列；**
+     - 首先尝试挂入 __ p__本地运行队列
+     - 如果本地队列已满，则调用runqputslow函数将gp挂入全局队列
+       - 准备工作：使用链表把从 _ p_的本地队列中取出的一半连同gp一起串联起来
+       - 尝试加锁，需要先把准备工作做完减少上锁的粒度从而降低锁冲突的概率
+       - 加锁成功，globrunqputbatch函数将链表接到全局队列上
+  6. 返回
+
+- #### 被动调度
+
+  - ##### 读channel的情况
+
+    - 调用runtime.chanrecv1函数
+      - runtime.chanrecv1函数调用chanrecv函数实现读取操作
+        - 首先会判断channel是否有数据可读，如果有则直接读取并返回；如果没有，则把当前goroutine挂入channel的读取队列中并**调用goparkunlock函数阻塞**goroutine
+        - goparkunlock函数
+          - 直接调用gopark函数
+            - 调用mcall从当前main goroutine切换到g0执行park_m函数
+            - 设置当前goroutine状态为 _Gwaiting
+            - 调用dropg函数解除g和m的关系
+            - 调用schedule函数进入调度循环
+
+  - ##### 唤醒阻塞在channel上的的goroutine
+
+    - ##### 写channel的情况
+
+      - 调用runtime.chansend1函数
+
+        - 如果能立即发送则立即返回，如果不能立即发送则阻塞
+
+      - channel的读取队列上有 g 在等待
+
+      - 调用send函数
+
+        - 调用goready函数切换到g0栈
+
+          - 调用**ready唤醒**正在等待读取的goroutine
+
+            - 将其状态设置为 _Grunnable 然后将其放入到运行队列中等待被调度器调度
+
+          - ##### 唤醒空闲的P，调用**weakup函数**
+
+          - 首先通过CAS操作确认是否有其他工作线程正处于spining状态
+
+          - CAS操作成功继续调用**startm**创建一个新的或唤醒一个正处于睡眠状态的工作线程
+
+          - ##### startm函数
+
+            - 首先判断是否有空闲的p结构体对象，如果没有则直接返回，如果有则需要创建或唤醒一个工作线程出来与之绑定
+
+            - 确保有可以绑定的p对象之后，startm函数首先尝试从m的空闲队列中查找正处于休眠状态的工作线程，如果找到则通过notewakeup函数唤醒它，否则调用newm函数创建一个新的工作线程出来。
+
+            - ##### notewakeup函数
+
+              - 首先使用atomic.Xchg设置note.key值为1，1表示被唤醒可以工作；0表示意外唤醒需要继续睡眠
+              - 然后调用futexwakeup函数，再调用包装了futex系统调用的futex函数来实现唤醒睡眠在内核中的工作线程
+
+            - ##### newm函数
+
+              - 调用alloc从堆上分配一个m的结构体对象
+              - 调用newm1()函数
+                - 调用newosproc函数，其中调用clone函数创建一个系统线程
+
+- #### 主动调度
+
+  - **runtime.Gosched**
+  - runtime.Gosched函数调用mcall时传递给mcall的参数为：**gosched_m**
+    - **gosched_m**调用**goschedlmpl**
+    - goschedlmpl的参数为需要进行调度的goroutine
+      - 将g的状态从 _Grunning设置为 _Grunnable，使用dropg函数解除m和g之间的关系
+      - 调用**globrunqput**函数将g放入全局运行队列中
+
+- #### 抢占调度
+
+  sysmon系统监控线程会定期（10毫秒）通过retake函数对goroutine发起抢占
+
+  - retake函数
+
+    - 根据 p 的两种状态检查是否需要抢占
+
+      - _Prunning，表示goroutine正在运行，**运行时间过长**，如果运行时间超过10毫秒则需要抢占
+
+        - sysmon线程监控到某个goroutine连续运行超过10毫秒则调用preemptone函数向goroutine发出抢占请求，preemptone设置一些抢占标志而并不真正强制被抢占的goroutine暂停下
+        - 被抢占的goroutine在函数的入口处检查g的stackguard0成员是否需要调用morestack_noctxt函数
+        - 最终调用newstack函数处理抢占请求
+
+      - _Psyscall，表示goroutine正在内核执行**系统调用**，此时需要多个**条件**来判断是否需要抢占
+
+        - 条件：
+
+          - p的运行队列里面有等待运行的goroutine。
+          - 没有空闲的p。表示其它所有的p都已经与工作线程绑定且正忙于执行go代码，这说明系统比较繁忙，所以需要**抢占当前正处于系统调用之中而实际上系统调用并不需要的这个p**并把它分配给其它工作线程去调度其它goroutine。
+          - 从上一次监控线程观察到p对应的m处于系统调用之中到现在已经超过10了毫秒。
+
+        - ##### 剥夺与工作线程所绑定的P
+
+          - retake函数判断出需要进行抢占会通过CAS来修改p的状态获取p的使用权，如果获取成功则调用handoffp寻找新的工作线程接管这个p
+          - 需要开启新的工作线程接管的情况
+            - _ p__的本地运行队列或全局运行队列里面有待运行的goroutine
+            - 需要帮助gc完成标记工作
+            - 系统比较忙，所有其他 _p__都在运行goroutine，需要帮忙
+            - 所有有其他P都已经处于空闲状态，如果需要监控网络连接读写事件，则启动新的m来poll网络连接
+
+        - ##### 从系统调用中返回的m
+
+          - 系统调用全过程
+            - 调用runtime.entersyscall函数
+              - 调用reentersyscall函数，首先把现场信息保存在当前g的sched成员中，然后解除m和p的绑定关系并把状态设置为 _Psyscall（此处解除绑定之后，sysmon线程就不需要加锁或进行cas操作进行状态的检查从而判断解绑）
+            - 使用SYSCALL指令进入系统调用
+            - 调用runtime.exitsyscall函数
+              - 调用exitsyscallfast去尝试绑定一个空闲的p（优先绑定进入系统调用之前的p，若绑定不成功则调用exitsyscallfast_pidle去全局队列获取空闲的p来绑定，如果找不到则把当前g放入到全局运行队列，由其他工作线程负责调度运行，然后调用stopm函数进入睡眠），如果调用成功则结束exitsyscall函数并按照函数调用链原路返回
+              - 如果exitsyscallfast调用失败，则调用mcall函数切换到g0栈执行exitsyscall0函数，
+
 ### **GPM模型**
 
 ##### 队列轮转
@@ -998,7 +1380,7 @@ valueOf获取值，传递的参数当参数使基本类型如int float struct这
 - **os.Open**打开系统中的文件，但是打开的文件 ***os.File**类型和**error**类型
 - **bufio.Scanner**、**ioutil.ReadFile**和**ioutil.WriteFile**底层实现为 ***os.File**  以及它的**Read**和**Write**方法
 
-## go编译
+## go编译运行
 
 - go语言引入的一种伪汇编，需要经过汇编器转换成机器指令才能被CPU执行。但是，用go汇编语言编写的代码一旦经过汇编器转换成机器指令之后，再用调试工具反汇编出来的代码已经不是go语言汇编代码了，而是跟平台相关的汇编代码。
 
@@ -1012,3 +1394,18 @@ valueOf获取值，传递的参数当参数使基本类型如int float struct这
 | **ret指令负责把call指令入栈的返回地址出栈给rip，从而实现从被调用函数返回到调用函数继续执行；** |                            **——**                            |                            **——**                            |
 |                                                              |           **gcc使用rax寄存器返回函数调用的返回值**           |               **go使用栈返回函数调用的返回值**               |
 
+- 程序的加载过程/初始化调度器的过程
+  - 加载主线程
+  - 初始化全局变量g0，作用提供一个栈供runtime代码执行，初始化内容主要是跟栈有关的内容，栈的大小约为64K
+  - 初始化m0，主线程与m0绑定，首先调用settls函数初始化主线程的本地存储然后检查TSL功能是否正常，若不正常直接abort退出程序。完成初始化后m0，g0和需要的p完全关联在一起
+    - m0和g0的关联，把g0的地址存在主线程的本地存储中以实现关联，然后把m0挂在全局链表allm上。
+    - m0初始化完成后调用procresize初始化系统需要用到的p结构体对象。（p的个数根据CPU核数以及环境变量来确定）
+    - 把所有的p全都放在全局变量allp当中，并把m0和allp[0]关联在一起
+    - 以上操作都在schedinit函数执行，还会将全局变量sched的maxcount成员设置为10000，限制最多的操作系统线程数量
+  - procresize函数如何初始化allp
+    - allp = make([]*p, nprocs)
+    - 然后循环创建p对象并保存在allp中
+    - 将m0和allp绑定在一起，m0.p = allp[0], allp[0].m = m0
+    - 把除了allp[0]之外的所有p放入到全局变量sched的pidle空闲队列之中
+
+![](./GO学习笔记.assets/屏幕快照 2021-04-10 下午3.37.33.png)
