@@ -554,6 +554,14 @@ type RWMutex struct {
 
 程序加载在**schedinit**完成调度系统的初始化后，调用**newproc()**创建新的goroutine用于**执行runtime.main**，runtime,main会去**调用main.main**
 
+- **新的goroutine创建过程**
+  1. 切换到g0栈；
+  2. 分配g结构体对象；
+  3. 初始化g对应的栈信息，并把参数拷贝到新g的栈上；
+  4. 设置好g的sched成员，该成员包括调度g时所必须pc, sp, bp等调度信息；
+  5. **调用runqput函数把g放入运行队列；**
+  6. 返回
+
 - newproc函数，接收两个参数：一所有参数的和大小，二入口函数的地址
   - newproc创建新的goroutine就绪需要把原来栈上的参数复制到新的栈上，所以必须要知道函数的参数的大小
   - 两个工作内容
@@ -562,7 +570,8 @@ type RWMutex struct {
 - newproc1函数，newproc是对newproc1的封装
   - 内容：
     - sched成员进行初始化，该成员包含调度器代码在调度goroutine到CPU运行时的必须信息
-    - gostartcallfn函数
+      - sched的sp成员表示newg被调度起来运行时应该使用的栈的栈顶，sched的pc成员表示当newg被调度起来运行时从这个地址开始执行指令
+    - 然后调用gostartcallfn函数
       - 从参数中提取出函数地址
         - 执行gostartcall函数，进行栈空间的调整和sched成员
           1. 调整栈空间，把goexit函数的第二条指令的地址入栈，伪造成goexit函数调用了fn，从而使fn执行完成之后执行ret指令时返回到goexit继续执行完成最后的清理工作
@@ -593,8 +602,8 @@ type RWMutex struct {
 - **gogo函数**（从g0切换到gp（CPU执行权的转让以及栈的切换））
 
   - gogo函数的汇编代码功能
-  - 将gp.sched的成员恢复到CPU的寄存器完成状态以及栈的转换
-  - 跳转到gp.sched.pc所指的指令地址（runtime.main）处执行（JMP指令）
+    - 将gp.sched的成员恢复到CPU的寄存器完成状态以及栈的转换
+    - 跳转到gp.sched.pc所指的指令地址（runtime.main）处执行（JMP指令）
 
 - **runtime.main函数**的工作流程
 
@@ -614,7 +623,7 @@ type RWMutex struct {
 
 - mcall函数
 
-  - 首先从当前g切换到g0，包括保存当前g的调度信息，把g0设置到TLS中，修改CPU的rsp寄存器使其指向g0的栈
+  - 首先从当前g切换到g0，包括保存当前g的调度信息，把g0设置到TLS中，修改CPU的rsp寄存器使其指向g0的栈（g0.sched.sp位置固定，不会发生栈空间不足的情况）
   - 以当前运行的g为参数调用fn函数（这里是goexit0）
 
 - 切换到g0栈之后，执行goexit0函数完成清理工作
@@ -707,7 +716,7 @@ schedule()->execute()->gogo()->g2()->goexit()->goexit1()->mcall()->goexit0()->sc
     - P的runnext成员，指向g结构体对象的指针，最多只包含一个goroutine
   - runqget函数
     - runnext成员不空则返回runnext所指的goroutine，并把runnext成员清零；
-    - runnext为空则继续从循环队列中查找goroutine
+    - runnext为空则继续从循环队列中查找goroutine，对runqhead的操作为CAS操作
       - atmoic.LoadAcq
         - 原子读取
         - 位于atmoic.LoadAcq之后的代码对内存的读取和写入必须在atmoic.LoadAcq读取完成后才能执行，编译器和CPU不能打乱这个顺序
@@ -775,37 +784,26 @@ schedule()->execute()->gogo()->g2()->goexit()->goexit1()->mcall()->goexit0()->sc
   - #### 工作线程进入睡眠
 
     - 找不到需要运行的goroutine则调用stopm进入睡眠状态
-
     - stopm()函数
-
       - **调用mput把m结构体对象放入sched的midle空闲队列，然后通过notesleep(&m.park)函数让自己进入睡眠状态**
-
-        - **note是go runtime实现的一次性睡眠和唤醒机制**
-        - **一个线程可以通过调用notesleep(\*note)进入睡眠状态，而另外一个线程则可以通过notewakeup(\*note)把其唤醒**
-        - linux平台下使用futex系统调用实现，mac下使用pthread_cond_t条件变量来实现。note对这些底层机制进行抽象封装提高拓展性
-
       - notesleep函数调用futexsleep进入睡眠，因为**futexsleep有可能意外从睡眠中返回**，所以从futexsleep函数返回后还需要检查note.key是否还是0，如果是0则表示并不是其它工作线程唤醒了我们，只是futexsleep意外返回了，需要再次调用futexsleep进入睡眠。
-
       - futexsleep调用futex进入睡眠，**futex系统调用的功能为如果 \*uaddr == val 则进入睡眠，否则直接返回**，该操作必须是原子操作所以在通过系统调用futex进入内核执行
 
-        ```c
-        int64 futex(int32 *uaddr, int32 op, int32 val, struct timespec *timeout, int32 *uaddr2, int32 val2);
-        ```
+    `int64 futex(int32 *uaddr, int32 op, int32 val, struct timespec *timeout, int32 *uaddr2, int32 val2);`
 
-### goroutine的调度运行
+    - note机制
+      - **note是go runtime实现的一次性睡眠和唤醒机制**
+      - **一个线程可以通过调用notesleep(\*note)进入睡眠状态，而另外一个线程则可以通过notewakeup(\*note)把其唤醒**
+      - linux平台下使用futex系统调用实现，mac下使用pthread_cond_t条件变量来实现。note对这些底层机制进行抽象封装提高拓展性
 
-- 过程：
-  1. 切换到g0栈；
-  2. 分配g结构体对象；
-  3. 初始化g对应的栈信息，并把参数拷贝到新g的栈上；
-  4. 设置好g的sched成员，该成员包括调度g时所必须pc, sp, bp等调度信息；
-  5. **调用runqput函数把g放入运行队列；**
-     - 首先尝试挂入 __ p__本地运行队列
-     - 如果本地队列已满，则调用runqputslow函数将gp挂入全局队列
-       - 准备工作：使用链表把从 _ p_的本地队列中取出的一半连同gp一起串联起来
-       - 尝试加锁，需要先把准备工作做完减少上锁的粒度从而降低锁冲突的概率
-       - 加锁成功，globrunqputbatch函数将链表接到全局队列上
-  6. 返回
+- **调用runqput函数把g放入运行队列**
+
+  - 首先尝试挂入 __ p__本地运行队列	
+  - 如果本地队列已满，则调用runqputslow函数将gp挂入全局队列
+
+  - **runqputslow函数**：使用链表把从 _ p_的本地队列中取出的一半连同gp一起串联起来（非原子操作）
+    - 尝试加锁，需要先把准备工作做完减少上锁的粒度从而降低锁冲突的概率
+  - 加锁成功，globrunqputbatch函数将链表接到全局队列上
 
 - #### 被动调度
 
@@ -835,32 +833,38 @@ schedule()->execute()->gogo()->g2()->goexit()->goexit1()->mcall()->goexit0()->sc
 
         - 调用goready函数切换到g0栈
 
-          - 调用**ready唤醒**正在等待读取的goroutine
+          1. **调用ready唤醒正在等待读取的goroutine**
 
-            - 将其状态设置为 _Grunnable 然后将其放入到运行队列中等待被调度器调度
+             - 将其状态设置为 _Grunnable 然后将其放入到运行队列中等待被调度器调度
 
-          - ##### 唤醒空闲的P，调用**weakup函数**
+          2. ##### 唤醒空闲的P，调用**weakup函数**
 
-          - 首先通过CAS操作确认是否有其他工作线程正处于spining状态
+             - 首先通过CAS操作确认是否有其他工作线程正处于spining状态
 
-          - CAS操作成功继续调用**startm**创建一个新的或唤醒一个正处于睡眠状态的工作线程
+             - CAS操作成功继续调用**startm**创建一个新的或唤醒一个正处于睡眠状态的工作线程
 
-          - ##### startm函数
+             - ##### startm函数
 
-            - 首先判断是否有空闲的p结构体对象，如果没有则直接返回，如果有则需要创建或唤醒一个工作线程出来与之绑定
+               - 首先判断是否有空闲的p结构体对象，如果没有则直接返回，如果有则需要创建或唤醒一个工作线程出来与之绑定
 
-            - 确保有可以绑定的p对象之后，startm函数首先尝试从m的空闲队列中查找正处于休眠状态的工作线程，如果找到则通过notewakeup函数唤醒它，否则调用newm函数创建一个新的工作线程出来。
+               - 确保有可以绑定的p对象之后，startm函数首先尝试从m的空闲队列中查找正处于休眠状态的工作线程，如果找到则通过notewakeup函数唤醒它，否则调用newm函数创建一个新的工作线程出来。
 
-            - ##### notewakeup函数
+               - ##### notewakeup函数
 
-              - 首先使用atomic.Xchg设置note.key值为1，1表示被唤醒可以工作；0表示意外唤醒需要继续睡眠
-              - 然后调用futexwakeup函数，再调用包装了futex系统调用的futex函数来实现唤醒睡眠在内核中的工作线程
+                 - 首先使用atomic.Xchg设置note.key值为1，1表示被唤醒可以工作；0表示意外唤醒需要继续睡眠
+                 - 然后调用futexwakeup函数，再调用包装了futex系统调用的futex函数来实现唤醒睡眠在内核中的工作线程
 
-            - ##### newm函数
+               - ##### newm函数
 
-              - 调用alloc从堆上分配一个m的结构体对象
-              - 调用newm1()函数
-                - 调用newosproc函数，其中调用clone函数创建一个系统线程
+                 - 调用alloc从堆上分配一个m的结构体对象
+                 - 调用newm1()函数
+                 - 调用newosproc函数，其中调用clone函数创建一个系统线程
+                 - **clone函数**
+                   - 准备工作：
+                     - 函数参数制定了内核创建线程时需要的选项和新线程应该使用的栈，newm已经创建出来新线程需要用的栈
+                     - 其他参数：mp、gp和线程入口函数，从父线程的栈保存到CPU寄存器中，当创建子线程时操作系统内核会把父线程的所有寄存器复制一份给子线程
+                   - 进入系统调用，clone会返回两次在子线程返回0，父线程返回子线程ID保存到栈最为newosproc的返回值
+                   - 对新的工作线程进行配置，如绑定m等
 
 - #### 主动调度
 
@@ -1394,18 +1398,19 @@ valueOf获取值，传递的参数当参数使基本类型如int float struct这
 | **ret指令负责把call指令入栈的返回地址出栈给rip，从而实现从被调用函数返回到调用函数继续执行；** |                            **——**                            |                            **——**                            |
 |                                                              |           **gcc使用rax寄存器返回函数调用的返回值**           |               **go使用栈返回函数调用的返回值**               |
 
-- 程序的加载过程/初始化调度器的过程
-  - 加载主线程
-  - 初始化全局变量g0，作用提供一个栈供runtime代码执行，初始化内容主要是跟栈有关的内容，栈的大小约为64K
-  - 初始化m0，主线程与m0绑定，首先调用settls函数初始化主线程的本地存储然后检查TSL功能是否正常，若不正常直接abort退出程序。完成初始化后m0，g0和需要的p完全关联在一起
-    - m0和g0的关联，把g0的地址存在主线程的本地存储中以实现关联，然后把m0挂在全局链表allm上。
-    - m0初始化完成后调用procresize初始化系统需要用到的p结构体对象。（p的个数根据CPU核数以及环境变量来确定）
-    - 把所有的p全都放在全局变量allp当中，并把m0和allp[0]关联在一起
-    - 以上操作都在schedinit函数执行，还会将全局变量sched的maxcount成员设置为10000，限制最多的操作系统线程数量
-  - procresize函数如何初始化allp
-    - allp = make([]*p, nprocs)
-    - 然后循环创建p对象并保存在allp中
-    - 将m0和allp绑定在一起，m0.p = allp[0], allp[0].m = m0
-    - 把除了allp[0]之外的所有p放入到全局变量sched的pidle空闲队列之中
+### 程序的加载过程/初始化调度器的过程
+
+- 加载主线程
+- 初始化全局变量g0，作用提供一个栈供runtime代码执行，初始化内容主要是跟栈有关的内容，栈的大小约为64K
+- 初始化m0，主线程与m0绑定，首先调用settls函数初始化主线程的本地存储然后检查TSL功能是否正常，若不正常直接abort退出程序。完成初始化后m0，g0和需要的p完全关联在一起
+  - m0和g0的关联，把g0的地址存在主线程的本地存储中以实现关联，然后把m0挂在全局链表allm上。
+  - m0初始化完成后调用procresize初始化系统需要用到的p结构体对象。（p的个数根据CPU核数以及环境变量来确定）
+  - 把所有的p全都放在全局变量allp当中，并把m0和allp[0]关联在一起
+  - 以上操作都在schedinit函数执行，还会将全局变量sched的maxcount成员设置为10000，限制最多的操作系统线程数量
+- procresize函数如何初始化allp
+  - allp = make([]*p, nprocs)
+  - 然后循环创建p对象并保存在allp中
+  - 将m0和allp绑定在一起，m0.p = allp[0], allp[0].m = m0
+  - 把除了allp[0]之外的所有p放入到全局变量sched的pidle空闲队列之中
 
 ![](./GO学习笔记.assets/屏幕快照 2021-04-10 下午3.37.33.png)
