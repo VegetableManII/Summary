@@ -1,5 +1,9 @@
 # GO语言调度器
 
+[TOC]
+
+
+
 ## 调度器数据结构
 
 1. g结构体
@@ -204,13 +208,15 @@
    g0   g        // m0的g0，也就是m0.g0 = &g0
    ```
 
-## GO程序的运行
+## GO程序的运行流程
 
 ### 调度器的初始化
 
 ![](https://img-blog.csdnimg.cn/20210412104644668.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3dlaXhpbl80NDA1NjkwMA==,size_16,color_FFFFFF,t_70#pic_center)
 
-**主线程和m0的关联：**通过线程本地存储 m0和g0的绑定，把g0的地址赋于主线程的线程本地存储
+**主线程和m0的关联**
+
+通过线程本地存储 m0和g0的绑定，把g0的地址赋于主线程的线程本地存储
 
 **settle函数**
 
