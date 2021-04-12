@@ -208,7 +208,7 @@
 
 ### 调度器的初始化
 
-![](./go调度.assets/屏幕快照 2021-04-12 上午10.25.26.png)
+![](https://img-blog.csdnimg.cn/20210412104644668.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3dlaXhpbl80NDA1NjkwMA==,size_16,color_FFFFFF,t_70#pic_center)
 
 **主线程和m0的关联：**通过线程本地存储 m0和g0的绑定，把g0的地址赋于主线程的线程本地存储
 
@@ -224,7 +224,7 @@ mcommoninit函数对m0(g0.m)进行必要的初始化（把m0放入到全局链�
 
 ### main goroutine的创建
 
-![](./go调度.assets/屏幕快照 2021-04-12 上午10.28.56.png)
+![](https://img-blog.csdnimg.cn/20210412104729942.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3dlaXhpbl80NDA1NjkwMA==,size_16,color_FFFFFF,t_70#pic_center)
 
 **newproc函数**
 
@@ -240,11 +240,11 @@ sched的sp成员表示newg被调度起来运行时应该使用的栈的栈顶
 
 sched的pc成员表示当newg被调度起来运行时从这个地址开始执行指令
 
-![](./go调度.assets/屏幕快照 2021-04-12 上午10.31.18.png)
+![](https://img-blog.csdnimg.cn/20210412104801511.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3dlaXhpbl80NDA1NjkwMA==,size_16,color_FFFFFF,t_70#pic_center)
 
 ### 调度main goroutine运行
 
-![](/Users/jack/Documents/go调度.assets/屏幕快照 2021-04-12 上午10.32.48.png)
+![](https://img-blog.csdnimg.cn/2021041210482281.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3dlaXhpbl80NDA1NjkwMA==,size_16,color_FFFFFF,t_70#pic_center)
 
 **goroutine的调度过程**
 
@@ -266,7 +266,7 @@ sched的pc成员表示当newg被调度起来运行时从这个地址开始执行
 
 ### 非main goroutine的退出
 
-![](/Users/jack/Documents/go调度.assets/屏幕快照 2021-04-12 上午10.34.10.png)
+![](https://img-blog.csdnimg.cn/2021041210484858.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3dlaXhpbl80NDA1NjkwMA==,size_16,color_FFFFFF,t_70#pic_center)
 
 **mcall函数**
 
@@ -276,7 +276,7 @@ sched的pc成员表示当newg被调度起来运行时从这个地址开始执行
 
 #### 调度发生的条件
 
-![](./go调度.assets/屏幕快照 2021-04-12 上午11.09.12.png)
+![](https://img-blog.csdnimg.cn/20210412110950788.png#pic_center)
 
 1. goroutine因为某个操作条件不满足（channel阻塞，网络连接阻塞，加锁阻塞或select操作阻塞）需要等待而发生调度
 2. goroutine主动调用Gosched函数让CPU发生调度
@@ -284,7 +284,7 @@ sched的pc成员表示当newg被调度起来运行时从这个地址开始执行
 
 #### 被动调度
 
-![](./go调度.assets/屏幕快照 2021-04-12 上午10.38.28.png)
+![](https://img-blog.csdnimg.cn/20210412104913827.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3dlaXhpbl80NDA1NjkwMA==,size_16,color_FFFFFF,t_70#pic_center)
 
 **读取channel阻塞而发生被动调度**
 
@@ -340,7 +340,7 @@ clone函数会返回两次，在子线程返回值为0继续执行子线程的�
 
 #### 主动调度
 
-![](./go调度.assets/屏幕快照 2021-04-12 上午10.39.39.png)
+![](https://img-blog.csdnimg.cn/20210412104935679.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3dlaXhpbl80NDA1NjkwMA==,size_16,color_FFFFFF,t_70#pic_center)
 
 **macall函数**
 
@@ -352,7 +352,7 @@ clone函数会返回两次，在子线程返回值为0继续执行子线程的�
 
 #### 抢占调度
 
-![image-20210412104138973](./go调度.assets/image-20210412104138973.png)
+![image-20210412104138973](https://img-blog.csdnimg.cn/2021041210515521.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3dlaXhpbl80NDA1NjkwMA==,size_16,color_FFFFFF,t_70#pic_center)
 
 **P的运行队列里有等待运行的gortoutine**
 
@@ -400,7 +400,7 @@ morestack_noctxt()使用jmp指令直接跳转至morestack继续执行，morestac
 
 #### schedu函数
 
-![](./go调度.assets/屏幕快照 2021-04-12 上午10.44.44.png)
+![](https://img-blog.csdnimg.cn/20210412105138234.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3dlaXhpbl80NDA1NjkwMA==,size_16,color_FFFFFF,t_70#pic_center)
 
 ##### 从全局队列获取
 
@@ -480,7 +480,7 @@ futex系统调用为我们提供的功能为如果 `*uaddr` == `val `则进入�
 
 ## 循环调度
 
-![](./go调度.assets/屏幕快照 2021-04-10 下午4.47.59.png)
+![](https://img-blog.csdnimg.cn/2021041210522628.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3dlaXhpbl80NDA1NjkwMA==,size_16,color_FFFFFF,t_70#pic_center)
 
 **shcedule函数**
 
