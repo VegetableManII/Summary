@@ -1,38 +1,38 @@
 # GO语言调度器
 
-\* [GO语言调度器](#go语言调度器)
+[GO语言调度器](#go语言调度器)
 
-   \* [调度器数据结构](#调度器数据结构)
+​		[调度器数据结构](#调度器数据结构)
 
-   \* [GO程序的运行流程](#go程序的运行流程)
+​		[GO程序的运行流程](#go程序的运行流程)
 
-​     \* [调度器的初始化](#调度器的初始化)
+​				 [调度器的初始化](#调度器的初始化)
 
-​     \* [main goroutine的创建](#main-goroutine的创建)
+​				[main goroutine的创建](#main-goroutine的创建)
 
-​     \* [调度main goroutine运行](#调度main-goroutine运行)
+​				 [调度main goroutine运行](#调度main-goroutine运行)
 
-​     \* [非main goroutine的退出](#非main-goroutine的退出)
+​				[非main goroutine的退出](#非main-goroutine的退出)
 
-​     \* [调度策略](#调度策略)
+​		[调度策略](#调度策略)
 
-​      \* [调度发生的条件](#调度发生的条件)
+​				[调度发生的条件](#调度发生的条件)
 
-​      \* [被动调度](#被动调度)
+​				[被动调度](#被动调度)
 
-​      \* [主动调度](#主动调度)
+​				[主动调度](#主动调度)
 
-​      \* [抢占调度](#抢占调度)
+​				[抢占调度](#抢占调度)
 
-​      \* [schedu函数](#schedu函数)
+​		[schedu函数](#schedu函数)
 
-​        \* [从全局队列获取](#从全局队列获取)
+​				[从全局队列获取](#从全局队列获取)
 
-​        \* [从本地运行队列获取](#从本地运行队列获取)
+​				[从本地运行队列获取](#从本地运行队列获取)
 
-​        \* [从其他工作线程中窃取](#从其他工作线程中窃取)
+​				[从其他工作线程中窃取](#从其他工作线程中窃取)
 
-   \* [循环调度](#循环调度)
+​		[循环调度](#循环调度)
 
 ## 调度器数据结构
 
@@ -308,9 +308,9 @@ sched的pc成员表示当newg被调度起来运行时从这个地址开始执行
 
 属于runtime逻辑代码，使用mcall是已经从用户g切换到了g0上，切换到g0.sched.sp固定位置不会造成栈溢出的情况 函数功能： 先从当前运行的g(我们这个场景是g2)切换到g0，这一步包括保存当前g的调度信息，把g0设置到tls中，修改CPU的rsp寄存器使其指向g0的栈； 以当前运行的g(我们这个场景是g2)为参数调用fn函数(此处为goexit0)。
 
-### 调度策略
+## 调度策略
 
-#### 调度发生的条件
+### 调度发生的条件
 
 ![](https://img-blog.csdnimg.cn/20210412110950788.png#pic_center)
 
@@ -318,7 +318,7 @@ sched的pc成员表示当newg被调度起来运行时从这个地址开始执行
 2. goroutine主动调用Gosched函数让CPU发生调度
 3. Goroutine运行时间太长或长时间处于系统调用而被调度器剥夺运行权而发生调度
 
-#### 被动调度
+### 被动调度
 
 ![](https://img-blog.csdnimg.cn/20210412104913827.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3dlaXhpbl80NDA1NjkwMA==,size_16,color_FFFFFF,t_70#pic_center)
 
@@ -374,7 +374,7 @@ clone函数会返回两次，在子线程返回值为0继续执行子线程的�
 
 首先通过系统调用获取到子线程的线程id，并赋值给m.procid，然后调用settls设置线程本地存储并通过把m.g0的地址放入线程本地存储之中，从而实现了m结构体对象与工作线程之间的关联
 
-#### 主动调度
+### 主动调度
 
 ![](https://img-blog.csdnimg.cn/20210412104935679.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3dlaXhpbl80NDA1NjkwMA==,size_16,color_FFFFFF,t_70#pic_center)
 
@@ -386,7 +386,7 @@ clone函数会返回两次，在子线程返回值为0继续执行子线程的�
 
 把主动调度的goroutine（即调用runtime.sched的g）的状态从 _Grunning 设置为 _Grunnable，通过dropg函数解除当前工作线程m和g的关系，然后调用globrunqput函数把主动调度的g放入全局队列中
 
-#### 抢占调度
+### 抢占调度
 
 ![image-20210412104138973](https://img-blog.csdnimg.cn/2021041210515521.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3dlaXhpbl80NDA1NjkwMA==,size_16,color_FFFFFF,t_70#pic_center)
 
@@ -434,11 +434,11 @@ main函数的第三条指令jbe指令跳转，jbe条件跳转指令，根据g结
 
 morestack_noctxt()使用jmp指令直接跳转至morestack继续执行，morestack会被编译器自动插入到函数序言(prologue)
 
-#### schedu函数
+## schedu函数
 
 ![](https://img-blog.csdnimg.cn/20210412105138234.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3dlaXhpbl80NDA1NjkwMA==,size_16,color_FFFFFF,t_70#pic_center)
 
-##### 从全局队列获取
+### 从全局队列获取
 
 为了保证调度的公平性，每个工作线程每经过61次调度就需要优先尝试从全局运行队列中找出一个goroutine来运行 全局运行队列是所有工作线程都可以访问的，所以在访问它之前需要加锁
 
@@ -460,7 +460,7 @@ n = int32(len(_p_.runq)) / 2
 //最多只能取本地队列容量的一半   }
 ```
 
-##### 从本地运行队列获取
+### 从本地运行队列获取
 
 首先查看runnext成员是否为空，如果不为空则返回runnext所指的goroutine，并把runnext成员清零，如果runnext为空，则继续从循环队列中查找goroutine
 
@@ -482,7 +482,7 @@ n = int32(len(_p_.runq)) / 2
 2. 位于atomic.CasRel之前的代码，对内存的读取和写入必须在atomic.CasRel对内存的写入之前完成，编译器和CPU都不能打乱这个顺序； 
 3. 线程执行atomic.CasRel完成后其它线程通过atomic.LoadAcq读取同一个变量可以读到最新的值，与此同时，位于atomic.CasRel之前的代码对内存写入的值，可以被其它线程中位于atomic.LoadAcq（对同一个变量操作）之后的代码读取到。
 
-##### 从其他工作线程中窃取
+### 从其他工作线程中窃取
 
 **工作线程M的自旋状态**
 
