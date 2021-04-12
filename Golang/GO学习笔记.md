@@ -487,7 +487,7 @@ type RWMutex struct {
 - 写操作不会被饿死的保证
   - 写操作到来时，会把RWMutex.readerCount值拷贝到RWMutex.readerWait中，用于标记排在写操作前面的读者个数。前面的读操作结束后，除了会递减RWMutex.readerCount，还会递减RWMutex.readerWait值，当RWMutex.readerWait值变为0时唤醒写操作。
 
-## 并发的模型
+## 并发
 
 ### 原子操作
 
@@ -550,7 +550,7 @@ type RWMutex struct {
 
 - **线程本地存储（TLS**）的使用：通过定义全局的m结构体变量，由线程本地存储机制可以为工作线程实现一个指向m结构体对象的私有全局变量，由此可以使用该全局变量来访问自己的m结构体对象以及与其关联p和g对象
 
-### main goroutine的创建
+#### main goroutine的创建
 
 程序加载在**schedinit**完成调度系统的初始化后，调用**newproc()**创建新的goroutine用于**执行runtime.main**，runtime,main会去**调用main.main**
 
@@ -584,7 +584,7 @@ type RWMutex struct {
   - 作用：
     - 从堆上分配一个g结构体对象并为这个newg分配一个大小为2K的栈，并设置好stack成员，然后把newg需要执行的函数的参数从执行newproc的栈 ( g0栈 ) 拷贝到newg的栈
 
-### main goroutine的调度(从g0切换到main goroutine)
+#### main goroutine的调度(从g0切换到main goroutine)
 
 - 保存g0的调度信息，主要是保存CPU栈顶寄存器SP到g0.sched.sp成员之中；
 
@@ -613,7 +613,7 @@ type RWMutex struct {
   4. 执行main.main函数
   5. 从main.main函数返回后调用exit系统调用退出进程
 
-### 非main goroutine的退出流程
+#### 非main goroutine的退出流程
 
 **非main goroutine退出时会返回到goexit执行清理工作**
 
@@ -914,7 +914,9 @@ schedule()->execute()->gogo()->g2()->goexit()->goexit1()->mcall()->goexit0()->sc
             - 使用SYSCALL指令进入系统调用
             - 调用runtime.exitsyscall函数
               - 调用exitsyscallfast去尝试绑定一个空闲的p（优先绑定进入系统调用之前的p，若绑定不成功则调用exitsyscallfast_pidle去全局队列获取空闲的p来绑定，如果找不到则把当前g放入到全局运行队列，由其他工作线程负责调度运行，然后调用stopm函数进入睡眠），如果调用成功则结束exitsyscall函数并按照函数调用链原路返回
-              - 如果exitsyscallfast调用失败，则调用mcall函数切换到g0栈执行exitsyscall0函数，
+              - 如果exitsyscallfast调用失败，则调用mcall函数切换到g0栈执行exitsyscall0函数
+                - 再次尝试从全局空闲队列获取一个p进行绑定，然后通过excute函数继续执行goroutine
+                - 找不到空闲的p则把当前goroutine放入全局运行队列，由其他工作线程负责调度运行，自己调用stopm进入睡眠
 
 ### **GPM模型**
 
