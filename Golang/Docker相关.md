@@ -102,7 +102,7 @@
 
 - 安装docker时会在以上每一个cgroup文件夹中都会有一个docker文件夹，运行容器时，在docker文件夹中同创建对应容器的文件夹即为这个容器的cgroup
 
-  ![linux-cgroups](./Docker相关.assets/2017-11-30-linux-cgroups.png)![2017-11-30-linux-cgroups](/Users/jack/Documents/其他/github/知识点总结/Summary/Golang/Docker相关.assets/2017-11-30-linux-cgroups.png)
+  ![linux-cgroups](./Docker相关.assets/2017-11-30-linux-cgroups.png)
 
 ## 联合文件系统
 
