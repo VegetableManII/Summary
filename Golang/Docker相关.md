@@ -159,6 +159,8 @@
 
 ## Docker使用
 
+#### **一次部署处处使用**
+
 #### 批量清理临时镜像文件：
 
 - docker rmi $(docker images -q -f danging=trye)

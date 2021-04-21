@@ -88,16 +88,12 @@
    }
    ```
 
-   
-
 2. m结构体
 
-   保存工作线程中的相关信息，如栈的起止位置、当前正在执行的goroutine以及是否空闲等状态信息，同时通过指针维护与p结构体对象的绑定关系。每个工作线程都有唯一一个m结构体对象与之对应
-
-   通过线程本地存储TLS实现，定义私有全局变量（在不同的工作线程中使用相同的全局变量名访问不同的m结构体对象）
+   保存工作线程中的相关信息，如栈的起止位置、当前正在执行的goroutine以及是否空闲等状态信息，同时通过指针维护与p结构体对象的绑定关系。每个工作线程都有唯一一个m结构体对象与之对应。通过线程本地存储TLS实现，定义私有全局变量（在不同的工作线程中使用相同的全局变量名访问不同的m结构体对象）
 
    ```go
-   type m struct {
+type m struct {
        // g0主要用来记录工作线程使用的栈信息，在执行调度代码时需要使用这个栈
        // 执行用户goroutine代码时，使用用户goroutine自己的栈，调度时会发生栈的切换
        g0      *g     // goroutine with scheduling stack
@@ -131,7 +127,7 @@
        ......
    }
    ```
-
+   
 3. p结构体
 
    保存每个工作线程私有的局部goroutine运行队列，工作线程优先使用自己的局部运行队列，在必要情况下才去访问全局运行队列，尽量减少锁的冲突提高工作线程的并发性。每一个工作线程都会与一个p结构体对象的示例关联
@@ -268,9 +264,9 @@ mcommoninit函数对m0(g0.m)进行必要的初始化（把m0放入到全局链�
 
 **通用的newproc1函数**
 
-参数一：入口函数的地址 参数二：入口函数的第一个参数的地址 参数三：入口函数的参数以字节为单位的大小 在初始化加载完成的情况下不需要切换g0栈（本身就在g0栈） 用户使用 go 开启新的goroutine时需要使用systemstack函数切换到g0 该函数运行在g0栈
+参数一：入口函数的地址 参数二：入口函数的第一个参数的地址 参数三：入口函数的参数以字节为单位的大小 在初始化加载完成的情况下不需要切换g0栈（本身就在g0栈） 用户使用 go 开启新的goroutine时需要使用systemstack函数切换到g0。**该函数运行在g0栈**
 
-**初始化g的sched成员**
+**初始化g的gobuf成员**
 
 sched的sp成员表示newg被调度起来运行时应该使用的栈的栈顶
 
@@ -306,7 +302,9 @@ sched的pc成员表示当newg被调度起来运行时从这个地址开始执行
 
 **mcall函数**
 
-属于runtime逻辑代码，使用mcall是已经从用户g切换到了g0上，切换到g0.sched.sp固定位置不会造成栈溢出的情况 函数功能： 先从当前运行的g(我们这个场景是g2)切换到g0，这一步包括保存当前g的调度信息，把g0设置到tls中，修改CPU的rsp寄存器使其指向g0的栈； 以当前运行的g(我们这个场景是g2)为参数调用fn函数(此处为goexit0)。
+属于runtime逻辑代码，使用mcall是已经从用户g切换到了g0上，切换到g0.sched.sp固定位置不会造成栈溢出的情况
+
+函数功能： 先从当前运行的g(我们这个场景是g2)切换到g0，这一步包括保存当前g的调度信息，把g0设置到tls中，修改CPU的rsp寄存器使其指向g0的栈； 以当前运行的g(这个场景是g2)为参数调用fn函数(此处为goexit0)。
 
 ## 调度策略
 
@@ -324,7 +322,9 @@ sched的pc成员表示当newg被调度起来运行时从这个地址开始执行
 
 **读取channel阻塞而发生被动调度**
 
-读取channel调用runtime.chanrecv1函数 chanrecv1直接调用chanrecv函数实现读取操作，chanrecv首先会判断channel是否有数据可读，如果有数据则直接读取并返回，但如果没有数据，则需要把当前goroutine挂入channel的读取队列之中并调用goparkunlock函数阻塞该goroutine goparkunlock函数直接调用gopark函数，gopark则调用mcall从当前main goroutine切换到g0去执行park_m函数
+读取channel调用runtime.chanrecv1函数 chanrecv1直接调用chanrecv函数实现读取操作，chanrecv首先会判断channel是否有数据可读，如果有数据则直接读取并返回，但如果没有数据，则需要把当前goroutine挂入channel的读取队列之中并调用goparkunlock函数阻塞该goroutine
+
+goparkunlock函数直接调用gopark函数，gopark则调用mcall从当前main goroutine切换到g0去执行park_m函数
 
 **park_m函数**
 
@@ -332,7 +332,9 @@ park_m首先把当前goroutine的状态设置为_Gwaiting（因为它正在等�
 
 **唤醒阻塞在channel上的goroutine**
 
-channel的发送操作是对runtime.chansend1函数的调用 channel发送和读取的流程类似，如果能够立即发送则立即发送并返回，如果不能立即发送则需要阻塞，如果有正挂在channel的读取队列上等待数据，所以这里直接调用send函数发送给待读取的g，send函数则调用goready函数切换到g0栈并调用ready函数来唤醒正在等待读的goroutine
+channel的发送操作是对runtime.chansend1函数的调用 
+
+channel发送和读取的流程类似，如果能够立即发送则立即发送并返回，如果不能立即发送则需要阻塞，如果有正挂在channel的读取队列上等待数据，所以这里直接调用send函数发送给待读取的g，send函数则调用goready函数切换到g0栈并调用ready函数来唤醒正在等待读的goroutine
 
 **ready函数**
 
@@ -340,7 +342,9 @@ ready函数首先把需要唤醒的goroutine的状态设置为_Grunnable，然�
 
 **wakeup函数**
 
-首先通过cas操作再次确认是否有其它工作线程正处于spinning状态 如果已经有工作线程进入了spinning状态而在四处寻找需要运行的goroutine，就没有必要再启动一个多余的工作线程出来了
+首先通过cas操作再次确认是否有其它工作线程正处于spinning状态 
+
+如果已经有工作线程进入了spinning状态而在四处寻找需要运行的goroutine，就没有必要再启动一个多余的工作线程出来了
 
 **startm函数**
 
@@ -380,7 +384,11 @@ clone函数会返回两次，在子线程返回值为0继续执行子线程的�
 
 **macall函数**
 
-保存调用Gosched的goroutine的现场信息 把保存在g0的sched.sp和sched.bp字段的值恢复到CPU的rsp和rbp寄存器，由此完成g2的栈到g0栈的切换 在g0栈执行goched_m函数。（gosched_m函数是runtime.Gosched函数调用mcall时传递给mcall的参数）。
+保存调用Gosched的goroutine的现场信息 
+
+把保存在g0的sched.sp和sched.bp字段的值恢复到CPU的rsp和rbp寄存器，由此完成g2的栈到g0栈的切换 
+
+在g0栈执行goched_m函数。（gosched_m函数是runtime.Gosched函数调用mcall时传递给mcall的参数）。
 
 **goshedlmpl函数**
 
@@ -404,7 +412,7 @@ clone函数会返回两次，在子线程返回值为0继续执行子线程的�
 
 **handoffp函数**
 
-通过各种条件判断是否需要启动工作线程来接管_p_，如果不需要则把_p_放入P的全局空闲队列
+通过各种条件判断是否需要启动工作线程来接管**_ p_** ，如果不需要则把**_ p_**放入P的全局空闲队列
 
 **Syscall6函数**
 
@@ -412,7 +420,9 @@ clone函数会返回两次，在子线程返回值为0继续执行子线程的�
 
 **reentersyscall函数**
 
-主动解除m和p的绑定关系之后，sysmon线程就不需要通过加锁或cas操作来修改m.p成员从而解除m和p之间的关系； 记录进入系统调用之前的g可以让工作线程从系统调用返回之后快速找到一个可能可用的p，而不需要加锁从sched的pidle全局队列中去寻找空闲的p
+主动解除m和p的绑定关系之后，sysmon线程就不需要通过加锁或cas操作来修改m.p成员从而解除m和p之间的关系； 
+
+记录进入系统调用之前的g可以让工作线程从系统调用返回之后快速找到一个可能可用的p，而不需要加锁从sched的pidle全局队列中去寻找空闲的p
 
 **exitsyscallfast_pidle函数**
 
@@ -532,4 +542,4 @@ futex系统调用为我们提供的功能为如果 `*uaddr` == `val `则进入�
 
 汇编代码函数功能： 把gp.sched的成员恢复到CPU的寄存器完成状态以及栈的切换； 跳转到gp.sched.pc所指的指令地址（runtime.main）处执行。CPU执行权的转让和切换
 
-**macll函数**
+**mcall函数**
