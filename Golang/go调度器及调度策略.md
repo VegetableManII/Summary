@@ -364,7 +364,7 @@ clone函数首先用了4条指令为clone系统调用准备参数，该系统调
 
 最重要的是第一个参数和第二个参数，分别用来指定内核创建线程时需要的选项和新线程应该使用的栈。
 
-因为即将被创建的线程与当前线程共享同一个进程地址空间，所以这里必须为子线程指定其使用的栈，否则父子线程会共享同一个栈从而造成混乱，从上面的newosproc函数可以看出，新线程使用的栈为m.g0.stack.lo～m.g0.stack.hi这段内存，而这段内存是newm函数在创建m结构体对象时从进程的堆上分配而来的。 
+因为即将被创建的线程与当前线程共享同一个进程地址空间，所以这里必须为子线程指定其使用的栈，否则父子线程会共享同一个栈从而造成混乱，新线程使用的栈为m.g0.stack.lo～m.g0.stack.hi这段内存，而这段内存是newm函数在创建m结构体对象时从进程的堆上分配而来的。 
 
 准备好系统调用的参数之后，还有另外一件很重的事情需要做，那就是把clone函数的其它几个参数（mp, gp和线程入口函数）保存到寄存器中，原因在于这几个参数目前还位于父线程的栈之中，而一旦通过系统调用把子线程创建出来之后，子线程将会使用我们在clone系统调用时给它指定的栈，所以这里需要把这几个参数先保存到寄存器，等子线程从系统调用返回后直接在寄存器中获取这几个参数。
 
@@ -382,7 +382,7 @@ clone函数会返回两次，在子线程返回值为0继续执行子线程的�
 
 ![](https://img-blog.csdnimg.cn/20210412104935679.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3dlaXhpbl80NDA1NjkwMA==,size_16,color_FFFFFF,t_70#pic_center)
 
-**macall函数**
+**mcall函数**
 
 保存调用Gosched的goroutine的现场信息 
 
@@ -476,7 +476,7 @@ n = int32(len(_p_.runq)) / 2
 
 **CAS操作**
 
-必要性在获取可运行g的过程中可能有其他工作线程正在窃取
+必要性在获取可运行g的过程中可能有其他工作线程正在窃取，runqhead只可能被其他线程修改而runqtail只会被自己修改
 
 对runqhead的操作使用了atomic.LoadAcq和atomic.CasRel，它们分别提供了load-acquire和cas-release语义。 
 

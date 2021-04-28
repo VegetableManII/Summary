@@ -1377,7 +1377,7 @@ type timerCtx struct {
 - Deadline()接口，返回timerCtx.deadline。而timerCtx.deadline是WithDeadline()或WithTimeout()方法设置的。
 - cancel接口重写了cancelCtx的cancle，只需要额外把time.Timer关闭
 
-##### WitchDeadline
+##### WithDeadline
 
 - 初始化一个timerCtx实例
 - 将timerCtx实例添加到其父节点的children中(如果父节点也可以被cancel的话)

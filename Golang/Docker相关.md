@@ -201,3 +201,54 @@
 #### docker环境迁移：
 
 - 停止docker服务，将整个docker存储文件复制到另一台宿主机上，然后调整另外一台宿主机的相关配置
+
+# k8s
+
+**容器集群管理平台，实现容器的自动部署，扩缩容，维护等功能**
+
+![img](./Docker相关.assets/o_200918110119k8sModule.png)
+
+## 核心组件
+
+- ##### etcd：保存集群的状态
+
+- ##### apiserver：提供用户操作接口，并且提供了认证、授权、访问控制、API注册和服务发现
+
+- ##### controller manager：负责维护集群的状态，故障检测、自动扩展、滚动更新
+
+- ##### schedule：负责资源调度，按照预定策略将Pod调度到机器上运行
+
+- ##### kublet：负责维护容器声明周期，负责CVI和CNI
+
+- ##### container runtime：负责镜像管理及Pod和容器的运行CRI
+
+- ##### kube-proxy：负责为service提供内部服务发现和负载均衡
+
+## Pod
+
+- pod中的容器的启动命令必须以前台命令作为启动命令
+
+  防止陷入死循环，k8s监控到pod运行结束销毁，然后根据ReplicationController副本数量重新启动陷入循环
+
+- pod中的多个容器可以通过localhost相互访问
+
+- pod中的多个容器可以共享pod级别的volume
+
+### pod的声明周期
+
+- Pending：API Server创建好Pod但是Pod内部的容器镜像还未创建
+- Running：pod内所有的容器已经创建成功，至少有一个容器正在运行，或重启或正在启动
+- Succeeded：pod内所有容器均成功执行退出，不会再次重启
+- Failed：所有容器都已经退出，某些容器退出失败
+- Unknow：无法获取pod的状态
+
+**重启策略**：由pod所在node节点上的kublet进行状态判断和重启。当容器异常退出或健康检查状态失败的时候，kublet会根据所设置的重启策略进行container重启
+
+- Always：当容器失效，有kublet自动重启容器
+- OnFailure：容器运行终止且状态码不为0的时候
+- Never：无论状态如何都不重启容器
+
+## Service
+
+**一组具有相同功能的容器提供一个统一的入口地址，并将请求负载进行分发到后端各个容器中**
+
