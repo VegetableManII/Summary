@@ -205,6 +205,22 @@ type bmap struct {
 
 ### channel
 
+```go
+type hchan struct {
+    qcount   uint           // 当前队列中剩余元素个数
+    dataqsiz uint           // 环形队列长度，即可以存放的元素个数
+    buf      unsafe.Pointer // 环形队列指针
+    elemsize uint16         // 每个元素的大小
+    closed   uint32            // 标识关闭状态
+    elemtype *_type         // 元素类型
+    sendx    uint           // 队列下标，指示元素写入时存放到队列中的位置
+    recvx    uint           // 队列下标，指示元素从队列的该位置读出
+    recvq    waitq          // 等待读消息的goroutine队列
+    sendq    waitq          // 等待写消息的goroutine队列
+    lock mutex              // 互斥锁，chan不允许并发读写
+}
+```
+
 - 有缓存的channel采用环形队列作为缓冲区
 
 - hchan结构中的recvq和sendq保存读写goroutine队列
@@ -503,7 +519,7 @@ type RWMutex struct {
 
 - sync/atomic
 
-  - sync.Once 通过标志位来实现单件模式
+  - sync.Once 通过标志位来实现单件模式（for rang结构中声明的变量即为单件模式属于单变量）
 
   - `atomic.Value`原子对象提供了`Load`和`Store`两个原子方法，分别用于加载和保存数据，返回值和参数都是`interface{}`类型，因此可以用于任意的自定义复杂类型。一下为生产者消费者模式的演示
 
