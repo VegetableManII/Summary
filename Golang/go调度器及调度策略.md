@@ -93,7 +93,7 @@
    保存工作线程中的相关信息，如栈的起止位置、当前正在执行的goroutine以及是否空闲等状态信息，同时通过指针维护与p结构体对象的绑定关系。每个工作线程都有唯一一个m结构体对象与之对应。通过线程本地存储TLS实现，定义私有全局变量（在不同的工作线程中使用相同的全局变量名访问不同的m结构体对象）
 
    ```go
-type m struct {
+   type m struct {
        // g0主要用来记录工作线程使用的栈信息，在执行调度代码时需要使用这个栈
        // 执行用户goroutine代码时，使用用户goroutine自己的栈，调度时会发生栈的切换
        g0      *g     // goroutine with scheduling stack
@@ -238,7 +238,7 @@ type m struct {
 
 ### 调度器的初始化
 
-![](https://img-blog.csdnimg.cn/20210412104644668.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3dlaXhpbl80NDA1NjkwMA==,size_16,color_FFFFFF,t_70#pic_center)
+![](./go调度器及调度策略.assets/part1.png)
 
 **主线程和m0的关联**
 
@@ -256,7 +256,7 @@ mcommoninit函数对m0(g0.m)进行必要的初始化（把m0放入到全局链�
 
 ### main goroutine的创建
 
-![](https://img-blog.csdnimg.cn/20210412104729942.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3dlaXhpbl80NDA1NjkwMA==,size_16,color_FFFFFF,t_70#pic_center)
+![](./go调度器及调度策略.assets/part2.png)
 
 **newproc函数**
 
@@ -272,11 +272,11 @@ sched的sp成员表示newg被调度起来运行时应该使用的栈的栈顶
 
 sched的pc成员表示当newg被调度起来运行时从这个地址开始执行指令
 
-![](https://img-blog.csdnimg.cn/20210412104801511.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3dlaXhpbl80NDA1NjkwMA==,size_16,color_FFFFFF,t_70#pic_center)
+![](./go调度器及调度策略.assets/part3.png)
 
 ### 调度main goroutine运行
 
-![](https://img-blog.csdnimg.cn/2021041210482281.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3dlaXhpbl80NDA1NjkwMA==,size_16,color_FFFFFF,t_70#pic_center)
+![](./go调度器及调度策略.assets/part4.png)
 
 **goroutine的调度过程**
 
@@ -298,7 +298,7 @@ sched的pc成员表示当newg被调度起来运行时从这个地址开始执行
 
 ### 非main goroutine的退出
 
-![](https://img-blog.csdnimg.cn/2021041210484858.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3dlaXhpbl80NDA1NjkwMA==,size_16,color_FFFFFF,t_70#pic_center)
+![](./go调度器及调度策略.assets/part5.png)
 
 **mcall函数**
 
@@ -310,7 +310,7 @@ sched的pc成员表示当newg被调度起来运行时从这个地址开始执行
 
 ### 调度发生的条件
 
-![](https://img-blog.csdnimg.cn/20210412110950788.png#pic_center)
+![](./go调度器及调度策略.assets/20210412110950788.png)
 
 1. goroutine因为某个操作条件不满足（channel阻塞，网络连接阻塞，加锁阻塞或select操作阻塞）需要等待而发生调度
 2. goroutine主动调用Gosched函数让CPU发生调度
@@ -318,7 +318,7 @@ sched的pc成员表示当newg被调度起来运行时从这个地址开始执行
 
 ### 被动调度
 
-![](https://img-blog.csdnimg.cn/20210412104913827.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3dlaXhpbl80NDA1NjkwMA==,size_16,color_FFFFFF,t_70#pic_center)
+![](./go调度器及调度策略.assets/part6-1.png)
 
 **读取channel阻塞而发生被动调度**
 
@@ -380,7 +380,7 @@ clone函数会返回两次，在子线程返回值为0继续执行子线程的�
 
 ### 主动调度
 
-![](https://img-blog.csdnimg.cn/20210412104935679.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3dlaXhpbl80NDA1NjkwMA==,size_16,color_FFFFFF,t_70#pic_center)
+![](./go调度器及调度策略.assets/part6-2.png)
 
 **mcall函数**
 
@@ -396,7 +396,7 @@ clone函数会返回两次，在子线程返回值为0继续执行子线程的�
 
 ### 抢占调度
 
-![image-20210412104138973](https://img-blog.csdnimg.cn/2021041210515521.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3dlaXhpbl80NDA1NjkwMA==,size_16,color_FFFFFF,t_70#pic_center)
+![image-20210412104138973](./go调度器及调度策略.assets/part6-3.png)
 
 **P的运行队列里有等待运行的gortoutine**
 
@@ -446,7 +446,7 @@ morestack_noctxt()使用jmp指令直接跳转至morestack继续执行，morestac
 
 ## schedu函数
 
-![](https://img-blog.csdnimg.cn/20210412105138234.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3dlaXhpbl80NDA1NjkwMA==,size_16,color_FFFFFF,t_70#pic_center)
+![](./go调度器及调度策略.assets/part7.png)
 
 ### 从全局队列获取
 
@@ -526,7 +526,7 @@ futex系统调用为我们提供的功能为如果 `*uaddr` == `val `则进入�
 
 ## 循环调度
 
-![](https://img-blog.csdnimg.cn/2021041210522628.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3dlaXhpbl80NDA1NjkwMA==,size_16,color_FFFFFF,t_70#pic_center)
+![](./go调度器及调度策略.assets/调度循环.png)
 
 **shcedule函数**
 
