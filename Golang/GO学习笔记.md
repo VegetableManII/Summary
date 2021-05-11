@@ -569,7 +569,9 @@ type RWMutex struct {
 - 如果两个事件不可排序，那么就说这两个事件是并发的。为了最大化并行，Go语言的编译器和处理器在不影响上述规定的前提下可能会对执行语句重新排序（CPU也会对一些指令进行乱序执行）。
 - 一个goroutine是无法看到另一个goroutine中的执行顺序的
 
-### goroutine调度器
+### **GPM模型**
+
+#### goroutine调度器
 
 ![img](./GO学习笔记.assets/b31027eeb493fa86654b41d46f34a98b_439x872.png)
 
@@ -591,7 +593,7 @@ type RWMutex struct {
 
 - **线程本地存储（TLS**）的使用：通过定义全局的m结构体变量，由线程本地存储机制可以为工作线程实现一个指向m结构体对象的私有全局变量，由此可以使用该全局变量来访问自己的m结构体对象以及与其关联p和g对象
 
-### 调度循环
+#### 调度循环
 
 ```go
 schedule()->execute()->gogo()->g2()->goexit()->goexit1()->mcall()->goexit0()->schedule()
@@ -610,26 +612,26 @@ schedule()->execute()->gogo()->g2()->goexit()->goexit1()->mcall()->goexit0()->sc
   4. 运行用户的goroutine代码
   5. 用户goroutine代码执行过程中调用runtime中的某些函数，然后这些函数调用mcall切换到g0.sched.sp所指的栈并最终再次调用schedule函数进入新一轮调度
 
-### schedule调度策略
+#### schedule调度策略
 
-#### 调度的发生
+##### 调度的发生
 
 - goroutine执行某个操作因条件不满足需要等待（channel阻塞，网络连接阻塞，加锁阻塞或select操作阻塞）而发生的调度；
 - goroutine主动调用Gosched()函数让出CPU而发生的调度；
 - goroutine运行时间太长或长时间处于系统调用之中而被调度器剥夺运行权而发生的调度。
 
-#### 场景解析
+##### 场景解析
 
 - P拥有G1，M1获取P后开始运行G1，G1使用`go func()`创建G2，为了局部性G2优先加入到P1本地队列
 - G1运行完成后（`goexit`），M上运行的goroutine切换到G0，G0负责调度协程的切换（`schedule`）。从P的本地队列获取G2，从G0切换到G2并开始运行G2（`excute`）实现M的复用
 - G创建很多个G，导致P本地队列已满，执行负载均衡将本地队列中前一半的G和新创建的G转移到全局队列
-- 在创建G时，运行的G会尝试唤醒其他空闲的P和M组合去执行，M被唤醒并绑定P后运行G0查找可运行的G进入自旋状态
-- 自旋状态的M尝试从全局队列获取（`findrunnable()`）一批G到本地队列，从全局队列到本地队列的负载均衡
+- 在创建G时，运行的G会尝试唤醒其他空闲的P和M组合去执行，M被唤醒并绑定P后运行G0查找可运行的G进入自旋状态。自旋状态的M尝试从全局队列获取（`findrunnable()`）一批G到本地队列，从全局队列到本地队列的负载均衡
 - 全局队列为空时，M和P的组合就会从其他P中窃取一半的G放到本地队列运行，如果无事可做根据`GOMAXPROCS`设置的值最多有这些M进行自旋，其他进入睡眠
-- 当发生阻塞的系统调用M和P解绑，P寻找新的M绑定继续运行下一个G
-- 当发生非阻塞的系统调用，M记住进入系统调用前的P，从系统调用退出后会首先绑定之前的P，若无法获取在去寻找空闲的P，如果找不到则把当前G标记为Runnable放入全局队列，M睡眠
-
-### **GPM模型**
+- 当发生channel读阻塞时，如果不能马上读取则`gopark->mcall()->park_m`将G设置为 _Gawiting，调用`dropg`解除关联然后调用schedule。写操作时唤醒`wakeup`通过CAS操作（可能M获取到了其他P和G或选择进入到睡眠状态）查看有无自旋状态的M，如果没有则`startm`唤醒一个M或创建一个M
+- 当发生阻塞的系统调用时，判断是否抢占1.当前P还有可运行的G，2.没有空闲的P，3.系统调用超过10ms，那么通过CAS操作（可能系统调用正好返回）获得P的使用权，`handloffp`  P寻找新的M绑定继续运行下一个G，找不到调用`mstart`唤醒或创建
+- 当发生非阻塞的系统调用，M记住进入系统调用前的P，从系统调用退出后会首先绑定之前的P绑定失败则获取空闲的P来绑定，还是绑定不成功则`mcall`切换到g0栈，g0栈上再次尝试获取，还是无法获取空闲的P，则把当前G标记为Runnable放入全局队列，M睡眠`stopm`
+- 当一个P运行超过10ms，`preemptone`设置抢占位**g.stackguard**为抢占状态然后切换到g0栈进行抢占，检查抢占位**g.stackguard**调用`goschedlmpl`完成调度切换
+- 主动调用`runtime.GoSched`：**mcall**切换，**goschedlmpl**修改状态、解绑然后放入全局队列
 
 ##### 队列轮转
 
@@ -645,7 +647,7 @@ schedule()->execute()->gogo()->g2()->goexit()->goexit1()->mcall()->goexit0()->sc
 
 ![](./GO学习笔记.assets/goroutineG窃取.png)
 
-**goroutine阻塞**：系统调用(打开文件)、网络数据读取(socket)、管道操作、同步包的控制
+**goroutine阻塞**：系统调用(打开文件)、网络数据读取(socket)、管道操作、同步包的控制(Mutex)、select操作
 
 
 
