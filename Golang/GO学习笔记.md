@@ -180,8 +180,8 @@ type bmap struct {
 
 - 哈希冲突，链地址法 overflow保存冲突的kv存储的bucket
 - 负载因子 = 键数量 / bucket数量，go中负载因子为6.5 (redis中为1)
-  - 哈希因子过小，说明空间利用率低
-  - 哈希因子过大，说明冲突严重，存取效率低
+  - 负载因子过小，说明空间利用率低
+  - 负载因子过大，说明冲突严重，存取效率低
 - 渐进扩容：
   - 扩容条件：1.负载因子＞6.5  2.溢出bucket数量＞2^15
   - 增量扩容：当负载因子过大则新建一个bucket其长度为原来的两倍，然后逐步每次搬迁2个键值对
@@ -246,7 +246,7 @@ type hchan struct {
 
   - 关闭值为nil的channel  (读取为nil的信道会永远阻塞)
   - 关闭已经关闭的channel
-  - 向关闭的channel中写数据
+  - 向关闭的channel中写数据（读取关闭的channel返回对应类型的零值和false）
 
 ### 函数
 
@@ -256,7 +256,7 @@ type hchan struct {
 
 - 支持可变数量参数，可变参数必须在参数声明的最后出现，实际上是一个切片类型的参数
 
-- 可变参数是空接口类型是，调用者是否解包可变参数其结果不同
+- 可变参数是空接口类型，调用者是否解包可变参数其结果不同
 
 - 闭包函数：当匿名函数引用了外部作用域中的变量时就成了闭包函数，闭包是引用传递。
 
@@ -282,8 +282,22 @@ type hchan struct {
 ### 接口
 
 - 接口类型是对其他类型行为的抽象和概括
+
 - 接口定义了方法的集合，这些方法依托于运行时的接口对象。
+
 - 接口对应的方法是在运行时动态绑定的。（Go语言通过隐式接口机制实现了鸭子面向对象模型。如果一个对象看起来像某个接口的实现那么就可以拿来当做这个接口使用）
+
+  ```go
+  type A interface{
+    Go()
+  }
+  type B struct {
+    
+  }
+  func (b *B)Go(){...}
+  // 在编译时检查 B 类型是否实现了A接口
+  var _ A = (*B)(nil)
+  ```
 
 ## 流程控制
 
@@ -384,7 +398,7 @@ main: i = 200, g = 100
 - defer语句被编译器翻译成对runtime包中的deferproc()函数的调用，该函数把defered函数打包成_defer结构体对象挂入goroutine对应的g结构体对象的__defer链表中，defer对象除了保存defered函数的地址以及函数需要的参数外，还会分别把call deferproc指令的下一条指令的地址以及此时函数调用栈顶指针保存在defer.pc和defer.sp成员中，用于recover时恢复程序的正常执行流程
 - 当某个defered函数通过recover()函数捕获到一个panic之后，程序将从该defered函数对应的_defer结构体对象的pc成员所保存的指令地址处开始执行；
 - **panic/recover执行流程**：对panic()或recover()的调用会被编译器翻译成runtime包中gopanic()和gorecover()的函数调用
-  - 遍历当前goroutine所注册的defered函数并**通过reflectcall调用**遍到的函数
+  - 遍历当前goroutine所注册的defered函数并**通过reflectcall调用**遍历k'y到的函数
     - 不同的defered函数参数大小可能有很大的差异
     - gopanic函数的栈帧大小固定且很小
   - 如果某个defered函数调用了recover(运行时中的gorecover函数)则使用mcall(recovery)恢复程序的正常流程
@@ -464,7 +478,7 @@ case elem, ok := <-chan1: // 通过ok来判断当前channel是否被关闭 关�
 - 遍历**map**时没有指定循环次数，循环体与遍历slice类似。由于map底层实现与slice不同，map底层使用hash表实现，插入数据位置是随机的，所以遍历过程中新插入的数据不能保证遍历到
 - channel遍历是依次从channel中读取数据,读取前是不知道里面有多少个元素的。如果channel中没有元素，则会阻塞等待，如果channel已被关闭，则会解除阻塞并退出循环。
 
-### mutex
+### Mutex
 
 ```go
 type Mutex struct {
@@ -967,10 +981,12 @@ schedule()->execute()->gogo()->g2()->goexit()->goexit1()->mcall()->goexit0()->sc
 
 ![](./GO学习笔记.assets/memory内存.png)
 
+![图片](./GO学习笔记.assets/640.png)
+
 - 初始化预留的虚拟内存空间（512M+16G+512G）
 - arena的大小为512G，为了方便管理把arena区域划分成一个个的page，每个page为8KB,一共有512GB/8KB个页；
 - spans区域存放内存管理单元`runtim.mspan`的指针，每个指针对应一个page(8KB)，所以span区域的大小为(512GB/8KB)*指针大小8byte = 512M
-- bitmap区域，主要用于GC，标识arean区域那些地址保存了对象，bitman中的每个字节都不标识堆中的32位字节是否空闲。
+- bitmap区域，主要用于GC，标识arean区域那些地址保存了对象，bitman中的每一位标识堆中的32位字节是否空闲。
 
 ### 内存管理组件
 
@@ -978,7 +994,7 @@ schedule()->execute()->gogo()->g2()->goexit()->goexit1()->mcall()->goexit0()->sc
 
 ```go
 type mspan struct {
-    next *mspan            //链表前向指针，用于将span链接起来
+    next *mspan            //链表后向指针，用于将span链接起来
     prev *mspan            //链表前向指针，用于将span链接起来
     startAddr uintptr // 起始地址，也即所管理页的地址
     npages    uintptr // 管理的页数
@@ -1098,7 +1114,7 @@ type mheap struct {
 - #### 大对象的分配
 
   - 大于32KB的大对象
-  - 直接调用 `runtime.mcache.allocLarge` 分配大片内存，不会从线程缓存或者中心缓存中获取内存管理单元
+  - 直接调用 `runtime.mcache.allocLarge` 分配大片内存，不会从线程缓存或者中心缓存中获取内存管理单元直接从堆上分配
 
 ### GC
 
@@ -1163,27 +1179,81 @@ go在内存分配过程的同时会进行垃圾回收
 
 - 写屏障
 
-  - 插入写屏障
+  ##### 插入写屏障（用于堆上的对象）
 
-    - 标记过程：
-      1. 垃圾收集器将根对象指向 A 对象标记成黑色并将 A 对象指向的对象 B 标记成灰色；
-      2. 用户程序修改 A 对象的指针，将原本指向 B 对象的指针指向 C 对象，这时触发写屏障将 C 对象标记成灰色；
-      3. 垃圾收集器依次遍历程序中的其他灰色对象，将它们分别标记成黑色
+  - 标记过程：
+    1. 垃圾收集器将根对象指向 A 对象标记成黑色并将 A 对象指向的对象 B 标记成灰色；
+    2. 用户程序修改 A 对象的指针，将原本指向 B 对象的指针指向 C 对象，这时触发写屏障将 C 对象标记成灰色；
+    3. 垃圾收集器依次遍历程序中的其他灰色对象，将它们分别标记成黑色
 
-    ![dijkstra-insert-write-barrier](./GO学习笔记.assets/2020-03-16-15843705141840-dijkstra-insert-write-barrier.png)
+  - 缺陷
+    栈上的对象在垃圾收集中也会被认为是根对象，所以为了保证内存的安全，必须**为栈上的对象增加写屏障**或者在**标记阶段完成重新对栈上的对象进行扫描**；需要STW重新扫描栈，标记栈上引用的白色对象的存活
 
-    - 缺陷
-      - 栈上的对象在垃圾收集中也会被认为是根对象，所以为了保证内存的安全，必须**为栈上的对象增加写屏障**或者在**标记阶段完成重新对栈上的对象进行扫描**
+  ![dijkstra-insert-write-barrier](./GO学习笔记.assets/2020-03-16-15843705141840-dijkstra-insert-write-barrier.png)
 
-  - 删除写屏障
+  ![img](./GO学习笔记.assets/16572fc059aeafe81256ec0922c6189e_1920x1080.jpeg)
 
-    - 标记过程：
-      1. 垃圾收集器将根对象指向 A 对象标记成黑色并将 A 对象指向的对象 B 标记成灰色；
-      2. 用户程序将 A 对象原本指向 B 的指针指向 C，触发删除写屏障，但是因为 B 对象已经是灰色的，所以不做改变；
-      3. **用户程序将 B 对象原本指向 C 的指针删除，触发删除写屏障，白色的 C 对象被涂成灰色**；
-      4. 垃圾收集器依次遍历程序中的其他灰色对象，将它们分别标记成黑色；
+  ![img](./GO学习笔记.assets/dead5c7327aa36a9dd6491fcd8ae75be_1920x1080.jpeg)
 
-    ![yuasa-delete-write-barrier](./GO学习笔记.assets/2021-01-02-16095599123266-yuasa-delete-write-barrier.png)
+  ![img](./GO学习笔记.assets/294216ca5997f0df13b621781a47cd24_1920x1080.jpeg)
+
+  ![img](./GO学习笔记.assets/62c363973c3baf17dee6871b8fd5fd79_1920x1080.jpeg)
+
+  ![img](./GO学习笔记.assets/545783724293dc5769123f2ead384eda_1920x1080.jpeg)
+
+  ![img](./GO学习笔记.assets/b3536074823deff4ee9a0d50706c2caf_1920x1080.jpeg)
+
+  ![img](./GO学习笔记.assets/4a2463054b2f336d5f1ee08409e32f11_1920x1080.jpeg)
+
+  ![img](./GO学习笔记.assets/895ea8ca38e0c80f8dc8e5f6445c207f_1920x1080.jpeg)
+
+  ![img](./GO学习笔记.assets/9cc7fd99761d60d386d2ca87d3a01fbd_1920x1080.jpeg)
+
+  ![img](./GO学习笔记.assets/58cb90c72f84312af826b22fc3cbbb15_1920x1080.jpeg)
+
+  ##### 删除写屏障
+
+  - 标记过程：
+
+    1. 垃圾收集器将根对象指向 A 对象标记成黑色并将 A 对象指向的对象 B 标记成灰色；
+    2. 用户程序将 A 对象原本指向 B 的指针指向 C，触发删除写屏障，但是因为 B 对象已经是灰色的，所以不做改变；
+    3. **用户程序将 B 对象原本指向 C 的指针删除，触发删除写屏障，白色的 C 对象被涂成灰色**；
+    4. 垃圾收集器依次遍历程序中的其他灰色对象，将它们分别标记成黑色；
+
+  - 缺陷：
+
+    回收精度低（删除引用后需要到下一轮回收才会被删除），GC开始时STW扫描堆栈来记录初始快照，这个过程会保护开始时刻的所有存活对象
+
+  ![yuasa-delete-write-barrier](./GO学习笔记.assets/2021-01-02-16095599123266-yuasa-delete-write-barrier.png)
+
+  ![img](./GO学习笔记.assets/65f2b58b0b3a1b20f26dcde525315599_1920x1080.jpeg)
+
+  ![img](./GO学习笔记.assets/d2f2a76d2aaf5c16cf9b7c094073fbbc_1920x1080.jpeg)
+
+  ![img](./GO学习笔记.assets/dc7866c2f884a1c245630c3ed91644e5_1920x1080.jpeg)
+
+  ![img](./GO学习笔记.assets/c2f05206cd9ae498025973c8bc763daa_1920x1080.jpeg)
+
+  ![img](./GO学习笔记.assets/a8541799ee4f9e598bef49136d448ade_1920x1080.jpeg)
+
+  ![img](./GO学习笔记.assets/fc176d88b2eab093ebd5aee643e0677a_1920x1080.jpeg)
+
+  ![img](./GO学习笔记.assets/8ed3690aa81a7ee78a1ce739c0adab38_1920x1080.jpeg)
+
+#### 混合写屏障
+
+- 栈不开启写屏障，堆上开启写屏障
+
+- 过程
+  - GC开始将栈上的可达对象全部扫描并标记成黑色（不再进行re-scan，无需STW）
+  - GC期间，任何栈上创建的新对象均为黑色
+  - 被删除的对象标记为灰色
+    - 对象被堆对象删除引用成为栈对象的下游，立刻标记为灰色
+    - 对象被栈对象删除引用成为栈对象的下游，直接添加都是黑色对象
+  - 被添加的对象标记为灰色
+    - 对象被堆对象删除引用成为堆对象的下游，立刻标记为灰色
+    - 对象被栈对象删除引用成为堆对象的下游，原来的下游对象会被标记为灰色
+- 混合写屏障满足`弱三色不变性`，结合删除写屏障和插入写屏障的优点开始时并发的扫描各个goroutine的栈使其变黑并一直保持
 
 #### 并发和增量
 
@@ -1209,7 +1279,9 @@ go在内存分配过程的同时会进行垃圾回收
 
 ### 逃逸分析
 
-如果函数外部没有引用，则优先放到栈中；如果函数外部存在引用，则必定放到堆中；
+如果函数外部没有引用，则优先放到栈中；如果函数外部存在引用，则必定放到堆中；可以使用
+
+`go build -gcflags=-m`查看变量的逃逸，注意编译器对代码优化成内联
 
 - 栈上分配内存比在堆中分配内存有更高的效率
 - 栈上分配的内存不需要GC处理
@@ -1449,19 +1521,34 @@ func WithValue(parent Context, key, val interface{}) Context {
 
 ### 方法
 
-- reflect.TypeOf()
-- reflect.ValueOf()
-- reflect.Value`提供了`Elem()`方法，可以获得指针向指向的`value
+- **reflect.ValueOf()**
+
+- **reflect.TypeOf()**
+
+  基本类型如int float struct这些值类型进行值传递需要获取他们的地址，反射类型为指针类型可以使用Elem来获取指针指向的值
+
+- **Value.Elem()**
+
+- **Type.Elem()**
+
+- **Value.Set()**系列方法用于设置值
+
+- **Field**系列方法获取结构体字段
+
+- **reflect.Value** 和 **reflect.Type**提供了`Elem()`方法，可以获得指针向指向数据
 
 用处：序列化和反序列化，比如json, protobuf等各种数据协议；配置文件解析相关的库，比如yaml、ini等
 
 变量信息：1.类型信息，元信息，是预先定义好的，静态的。2.值信息，程序进行过程中，动态变化的。
 
-reflact包中的kind和typeof，kind是一个无符号整数，而type是一个接口类型，使用TypeOf获得动态类型的反射type之后在调用种类特定的方法之前，使用 Kind 方法找出类型的类型。调用不适合这种类型的方法会导致运行时panic。
+- **kind**和**typeof**
+  - kind是一个无符号整数，表示语言元数据类型，如指针类型，结构体类型等
+  - type是一个接口类型，使用**TypeOf**可以获得动态类型，如结xx构体指针或xx结构体(具体到某一个包中的某一个结构体)
+  - 使用 Kind 方法找出类型的类型。调用不适合这种类型的方法会导致运行时panic。
 
-valueOf获取值，传递的参数当参数使基本类型如int float struct这些值类型进行值传递需要获取他们的地址，反射类型为指针类型可以使用Elem来获取指针指向的值
-
-结构体的方法的调用使用Call 其参数是Value类型的切片；结构体中tag保存在structfield里面，通过Field().tag.Get()获得
+- 结构体
+  - 结构体的字段获取：**(Value).FieldByName**
+  - 结构体的方法的调用使用Call 其参数是Value类型的切片；结构体中tag保存在structfield里面，通过Field().tag.Get()获得
 
 ## Go test
 
@@ -1496,7 +1583,32 @@ valueOf获取值，传递的参数当参数使基本类型如int float struct这
 
 - `func TestMain(m *testing.M)`，参数类型为`testing.M`指针。如果声明了这样一个函数，当前测试程序将不是直接执行各项测试，而是将测试交给TestMain调度。
 
-## os包
+## go标准库
+
+|    包    |                             功能                             |
+| :------: | :----------------------------------------------------------: |
+| archive  | 提供了访问**tar**或**zip**类型文件的功能，能够支持大多数系统下的压缩包的变体 |
+|  bufio   | 提供了对缓冲`IO`流的操作，包装`io.Reader`和`io.Writer`。使用需要创建`Reader/Scanner`对象和`Writer`对象，同时支持自定义`Scanner`的 拆分功能。 |
+|  bytes   | 提供了操作字节流的一系列函数，如比较、前缀、拼接、搜索、替换、转换、长度、容量、读写 |
+| compress | 提供了对**bzip2**、flate、**gzip**、lzw、**zlib**格式的压缩功能 |
+|  crypto  |      收集了常用的密码算法，如aes、dsa、md5、rsa、shaX等      |
+| encoding | 提供数据转换为字节级别或文本级别表示形式的共享接口，提供了gob、json、xml、base64等编解码方法 |
+|   flag   |                    命令行参数解析功能函数                    |
+|   fmt    |        格式化I/O操作，与C中的printf，scanf系函数类似         |
+|   sort   |                  提供了用户自定义类型的排序                  |
+
+### container
+
+- 提供了**heap**、**list**、**ring**三种容器的相关操作
+  - **heap**：实现了堆结构
+    - 实现**heap**中的接口（`Len`、`Less`、`Swap`、`Push`、`Pop`）即可使用包中提供的对堆操作的一系列方法
+  - **list**：实现了双向链表
+    - 链表中的元素定义为`Element`，底层为空接口类型
+    - 提供了双向链表的操作：**Next**、**Prev**、**Back**、**Front**、**InsertXxxx**、**MoveXxxx**、**PushXxxx**
+  - **ring**：实现了环形列表
+    - 底层使用空接口接收列表中的数据
+
+### os
 
 - os包实现了跨平台提供一些与系统交互的函数和变量
 - 程序的命令行参数可以从**os.Args**中获得
@@ -1506,6 +1618,15 @@ valueOf获取值，传递的参数当参数使基本类型如int float struct这
 
 ## go编译运行
 
+### 编译参数/性能调优
+
+- 操作系统工具：**time**、**top**
+
+- 编译环境变量`GODEBUG='gctrace=1'`(打印垃圾回收器信息)
+- 代码中函数调用`runtime.ReadMemStats`
+- **pprof**工具
+  - 启动`net/http/pprof`服务
+  - `go tool pprof`
 - go语言引入的一种伪汇编，需要经过汇编器转换成机器指令才能被CPU执行。但是，用go汇编语言编写的代码一旦经过汇编器转换成机器指令之后，再用调试工具反汇编出来的代码已经不是go语言汇编代码了，而是跟平台相关的汇编代码。
 
 ### 函数调用过程
