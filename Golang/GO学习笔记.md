@@ -234,7 +234,7 @@ type hchan struct {
 
   如果recvq等待接收队列不空说明缓冲没有数据或没有缓冲区，则直接取来一个等待队列中的G唤醒写入数据；如果缓冲区有空余，将数据写入缓冲区；如果缓冲区满则将数据写入G并把G加入到sendq队列
 
-  ![1.1 chan - 图3](./GO学习笔记.assets/chan-03-send_data.png)
+  ![](./GO学习笔记.assets/chan-03-send_data.png)
 
 - 读数据流程
 
