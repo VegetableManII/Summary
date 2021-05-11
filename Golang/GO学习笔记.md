@@ -571,6 +571,8 @@ type RWMutex struct {
 
 ### goroutine调度器
 
+![img](./GO学习笔记.assets/b31027eeb493fa86654b41d46f34a98b_439x872.png)
+
 - goroutine是Go实现的用户态线程
 
   - 传统操作系统线程的问题
@@ -585,7 +587,7 @@ type RWMutex struct {
     - p结构体对象，保存每个工作线程私有的局部goroutine运行队列，工作线程优先使用自己的局部运行队列，在必要情况下才去访问全局运行队列，尽量减少锁的冲突提高工作线程的并发性。每一个工作线程都会与一个p结构体对象的示例关联
     - m结构体对象，保存工作线程中的相关信息，如栈的起止位置、当前正在执行的goroutine以及是否空闲等状态信息，同时通过指针维护与p结构体对象的绑定关系。每个工作线程都有唯一一个m结构体对象与之对应
 
-  ![](./GO学习笔记.assets/屏幕快照 2021-04-10 下午1.22.43.png)
+  ![](./GO学习笔记.assets/schedt.png)
 
 - **线程本地存储（TLS**）的使用：通过定义全局的m结构体变量，由线程本地存储机制可以为工作线程实现一个指向m结构体对象的私有全局变量，由此可以使用该全局变量来访问自己的m结构体对象以及与其关联p和g对象
 
@@ -691,7 +693,7 @@ schedule()->execute()->gogo()->g2()->goexit()->goexit1()->mcall()->goexit0()->sc
 
 
 
-![](./GO学习笔记.assets/屏幕快照 2021-04-10 下午4.47.59.png)
+![](./GO学习笔记.assets/调度循环.png)
 
 - #### 工作线程执行流程
 
@@ -1654,4 +1656,6 @@ func WithValue(parent Context, key, val interface{}) Context {
   - 将m0和allp绑定在一起，m0.p = allp[0], allp[0].m = m0
   - 把除了allp[0]之外的所有p放入到全局变量sched的pidle空闲队列之中
 
-![](./GO学习笔记.assets/屏幕快照 2021-04-10 下午3.37.33.png)
+![](./GO学习笔记.assets/绑定关系.png)
+
+![](./GO学习笔记.assets/初始化.png)

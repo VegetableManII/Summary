@@ -215,7 +215,7 @@ func Test2phasesTimeout(t *testing.T) {
   }
   ```
 
-  ![](./GO性能相关.assets/屏幕快照 2021-03-25 下午9.40.47.png)
+  ![](./GO性能相关.assets/channel.png)
 
 - 改进
 
