@@ -1,5 +1,66 @@
 # GO高性能编程
 
+## 减少[]byte的分配
+
+- 字节切片的**RESET**推荐使用`s = s[:0]`的方式
+
+## 去接口，内联
+
+- 在继承接口时，使用**实现了接口的对象指针**代替**接口类型**，提升性能
+
+> https://colobu.com/2019/12/31/small-changes-big-improvement/
+
+## 利用CPU缓存
+
+> https://pengrl.com/p/9125/?hmsr=toutiao.io&utm_medium=toutiao.io&utm_source=toutiao.io
+
+- CPU cache line
+  - CPU cache在缓存数据时，并不是以单个字节为单位缓存的，而是以**CPU cache line**大小为单位缓存，CPU cache line在一般的x86环境下为64字节。即使从内存读取1个字节的数据，也会将邻近的64个字节一并缓存至CPU cache中。
+- false sharing
+  - 由于一个CPU核在读取一个变量时，以cache line的方式将后续的变量也读取进来，缓存在自己这个核的cache中，而后续的变量也可能被其他CPU核并行缓存。当前面的CPU对前面的变量进行写入时，该变量同样是以cache line为单位写回内存。此时，在其他核上，尽管缓存的是该变量之后的变量，但是由于没法区分自身变量是否被修改，所以它只能认为自己的缓存失效，重新从内存中读取。
+
+- 在高性能系统编程场景下，一般解决false sharing的方法是，在变量间添加无意义的填充数据（**cache line padding**）。需要高频并发读写的不同变量，不出现在一个cache line中。适用于多个相邻变量频繁被并发读写的场景
+
+- go中的应用
+
+  - Timer定时器
+
+  ```go
+  const timersLen = 64
+  // pad 用作cache line的优化作用
+  // 匿名结构体对timersBucket的封装，相当于在原本一个接一个的timersBucket数组元素之间，插入了pad。
+  // 从而保证不同的timersBucket对象不会出现在同一个cache line中。
+  var timers [timersLen]struct {
+    timersBucket
+    pad [cpu.CacheLinePadSize - unsafe.Sizeof(timersBucket{})%cpu.CacheLinePadSize]byte
+  }
+  ```
+
+  - mheap类型
+
+  ```go
+  // pad 用作cache line优化
+  // mcentral 同理 Timer 中的做法，在数组中每两个mcentral中插入pad
+  type mheap struct {
+    // ...
+    central [numSpanClasses]struct {
+      mcentral mcentral
+      pad      [cpu.CacheLinePadSize - unsafe.Sizeof(mcentral{})%cpu.CacheLinePadSize]byte
+    }
+    // ...
+  }
+  ```
+
+## 禁止使用没有超时的 I/O
+
+## 优先使用strconv而不是fmt
+
+## 避免字符串到字节的转换
+
+## 不要在文件操作循环中使用defer
+
+- 在文件操作循环中使用`defer`，会导致文件描述符耗尽。因为循环中在所有文件都被处理之前不会调用`defer`释放资源
+
 ## for和range性能比较
 
 - 当for和range (只迭代下标时) 性能上无差异，如遍历 [ ]struct{}、[ ]int等
