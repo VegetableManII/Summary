@@ -157,6 +157,24 @@ func (o *Once) doSlow(f func()) {
   }
   ```
 
+## go中的unsafe.Pointer和uintptr
+
+- ### unsafe.Pointer
+
+  - 保存内存地址（包括动态链接的地址），表示指向任意类型的指针可以转换为任何类型或`uintptr`的指针值
+  - 实现快速拷贝，两个指针共享同一内存空间，一方改变另一方也会受到影响
+
+  ```go
+  ptrT1 := &T1{}
+  ptrT2 = (*T2)(unsafe.Pointer(ptrT1))
+  ```
+
+- ### uintptr
+
+  - 一个数字， 表示内存中的一个地址编号
+  - 当把`unsafe.Pointer`转换为`uintptr`之后，原来的指针不再引用指向的变量而且在转换回来之前，会被GC，解决方案可以使用`runtime.KeepAlive`，也可以在一个表达式中进行两次转换
+  - `reflect.Value.Pointer`和`reflect.Value.UnsafeAddr`这两个方法都会返回`uintptr`类型，在使用时应该立即转换为`unsafe.Pointer`类型
+
 ## go中常见的坑
 
 1. **可变参数为空接口类型**时，传入空接口的切片时要注意参数展开问题
