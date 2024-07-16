@@ -3,8 +3,7 @@
 ### 高并发的运行过程
 
 - 大量goroutine调用`(*Group).Do`或者`(*Group).DoChan`
-- Group要先加锁，抢锁成功的goroutine创建**key-call**组合并让WaitGroup加1，解锁，然后去执行用户函数；
-- 其他goroutine抢锁
+- 阻塞式执行和非阻塞式执行
   - **Do( )**
     - 抢到锁之后，等待计数加一然后解锁，调用`c.wg.Wait()`等待第一个goroutine的执行结果
   - **DoChan( )**
@@ -19,8 +18,6 @@
 - **Do**中`call`对象的创建只申请内存空间而不初始化，**DoChan**中`call`对象的创建会初始化切片
 
   `doCall`函数中遍历 nil 切片也不会导致 **panic**
-
-- 第一个获取锁的goroutine执行完成用户操作之后，下一次获得锁的时间
 
 ## 源码
 
